@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PiRpcClient } from "./PiRpcClient";
+import { PiLocator } from "./PiLocator";
 
 export class PiProcess extends EventEmitter {
   private proc?: ChildProcessWithoutNullStreams;
@@ -14,13 +15,16 @@ export class PiProcess extends EventEmitter {
     if (this.proc) return this.rpc!;
 
     const args = ["--mode", "rpc", ...(sessionPath ? ["--session", sessionPath] : [])];
+    const locator = new PiLocator();
+    const command = locator.resolveCommand();
 
     // 每个 agent 绑定独立 cwd，确保 pi 自己发现项目级 AGENTS.md、settings 和 session 分组。
-    this.proc = spawn("pi", args, {
+    // 打包后的 Electron 不一定继承用户终端 PATH；这里补齐跨平台 Node 工具链常见 bin 目录，尽量让已安装 pi 的用户开箱即用。
+    this.proc = spawn(command, args, {
       cwd: this.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      env: process.env,
+      env: locator.createProcessEnv(),
     });
 
     this.rpc = new PiRpcClient(this.proc.stdin, this.proc.stdout);

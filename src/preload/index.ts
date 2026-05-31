@@ -1,12 +1,13 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { ipcChannels } from "../shared/ipc";
-import type { AgentRuntimeState, AgentTab, AppSettings, AvailableModel, ChatMessage, CreateAgentInput, FileTreeNode, GitBranchInfo, PiCommand, Project, SendPromptInput, SessionSummary } from "../shared/types";
+import type { AgentRuntimeState, AgentTab, AppInfo, AppSettings, AvailableModel, ChatMessage, CreateAgentInput, FileTreeNode, GitBranchInfo, PiCommand, PiInstallStatus, Project, SendPromptInput, SessionSummary } from "../shared/types";
 
 const api = {
   projects: {
     list: () => ipcRenderer.invoke(ipcChannels.projectsList) as Promise<Project[]>,
     add: () => ipcRenderer.invoke(ipcChannels.projectsAdd) as Promise<Project | null>,
     remove: (id: string) => ipcRenderer.invoke(ipcChannels.projectsRemove, id) as Promise<Project[]>,
+    onChanged: (callback: (projects: Project[]) => void) => subscribe(ipcChannels.projectsChanged, callback),
   },
   files: {
     list: (projectId: string) => ipcRenderer.invoke(ipcChannels.filesList, projectId) as Promise<FileTreeNode[]>,
@@ -19,6 +20,13 @@ const api = {
   git: {
     branches: (projectId: string) => ipcRenderer.invoke(ipcChannels.gitBranches, projectId) as Promise<GitBranchInfo>,
     checkout: (projectId: string, branch: string) => ipcRenderer.invoke(ipcChannels.gitCheckout, projectId, branch) as Promise<GitBranchInfo>,
+  },
+  pi: {
+    check: () => ipcRenderer.invoke(ipcChannels.piCheck) as Promise<PiInstallStatus>,
+  },
+  app: {
+    info: () => ipcRenderer.invoke(ipcChannels.appInfo) as Promise<AppInfo>,
+    openExternal: (url: string) => ipcRenderer.invoke(ipcChannels.appOpenExternal, url) as Promise<void>,
   },
   settings: {
     get: () => ipcRenderer.invoke(ipcChannels.settingsGet) as Promise<AppSettings>,

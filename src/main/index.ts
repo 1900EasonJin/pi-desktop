@@ -6,6 +6,7 @@ import type { CreateAgentInput, SendPromptInput } from "../shared/types";
 import { ProjectStore } from "./projects/ProjectStore";
 import { FileSystemService } from "./fs/FileSystemService";
 import { AgentManager } from "./pi/AgentManager";
+import { PiLocator } from "./pi/PiLocator";
 import { SessionScanner } from "./sessions/SessionScanner";
 import { SettingsStore } from "./settings/SettingsStore";
 import { GitService } from "./git/GitService";
@@ -16,6 +17,7 @@ let fileSystemService: FileSystemService;
 let sessionScanner: SessionScanner;
 let settingsStore: SettingsStore;
 let gitService: GitService;
+let piLocator: PiLocator;
 let agentManager: AgentManager;
 
 function createWindow() {
@@ -25,6 +27,8 @@ function createWindow() {
   const iconPath = join(__dirname, "../../build/icon.png");
 
   mainWindow = new BrowserWindow({
+    show: false,
+    backgroundColor: "#eef0f3",
     width: 1320,
     height: 860,
     minWidth: 980,
@@ -41,6 +45,8 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
 
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -88,6 +94,13 @@ function registerIpc() {
     return gitService.checkout(project.path, branch);
   });
 
+  ipcMain.handle(ipcChannels.piCheck, () => piLocator.check());
+  ipcMain.handle(ipcChannels.appInfo, () => ({ version: app.getVersion(), releasesUrl: "https://github.com/ayuayue/pi-desktop/releases" }));
+  ipcMain.handle(ipcChannels.appOpenExternal, async (_event, url: string) => {
+    // 外部链接统一经主进程打开，避免 renderer 直接依赖 shell 权限，也便于后续做白名单校验。
+    await shell.openExternal(url);
+  });
+
   ipcMain.handle(ipcChannels.settingsGet, () => settingsStore.get());
   ipcMain.handle(ipcChannels.settingsUpdate, async (_event, patch) => {
     const settings = await settingsStore.update(patch);
@@ -116,11 +129,15 @@ app.whenReady().then(async () => {
   sessionScanner = new SessionScanner();
   settingsStore = new SettingsStore();
   gitService = new GitService();
+  piLocator = new PiLocator();
   agentManager = new AgentManager(id => projectStore.get(id), () => mainWindow);
 
-  await Promise.all([projectStore.load(), settingsStore.load()]);
+  await settingsStore.load();
   registerIpc();
   createWindow();
+
+  // 项目列表可能位于杀软/同步盘较慢的 userData；窗口先显示，随后异步加载，避免 packaged app 打开时白屏等待。
+  void projectStore.load().then(() => mainWindow?.webContents.send("projects:changed", projectStore.list())).catch(() => undefined);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

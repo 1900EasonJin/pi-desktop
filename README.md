@@ -2,6 +2,8 @@
 
 [中文文档](README.zh-CN.md)
 
+[linuxdo友链](https://linux.do)
+
 A desktop workbench for running and managing multiple [pi](https://pi.dev) coding-agent sessions across project folders.
 
 `pi-desktop` is not a fork of pi and does not reimplement the agent. It is a lightweight Electron shell that orchestrates multiple `pi --mode rpc` processes and provides a desktop UI for projects, sessions, files, history, model state, and conversation navigation.

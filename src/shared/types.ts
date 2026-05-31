@@ -84,6 +84,20 @@ export type AppSettings = {
   useNativeTitleBar: boolean;
   showNativeMenu: boolean;
   sendShortcut: SendShortcutMode;
+  piEnvironmentChecked: boolean;
+};
+
+export type PiInstallStatus = {
+  installed: boolean;
+  command?: string;
+  version?: string;
+  searchedDirs: string[];
+  error?: string;
+};
+
+export type AppInfo = {
+  version: string;
+  releasesUrl: string;
 };
 
 export type PiRuntimeEvent = {

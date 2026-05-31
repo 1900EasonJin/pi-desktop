@@ -1,4 +1,5 @@
 import { app } from "electron";
+import { readFileSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionSummary } from "../../shared/types";
@@ -109,7 +110,23 @@ export class SessionScanner {
     const normalizedProject = this.normalize(projectPath);
     const normalizedSessionProject = summary.projectPath ? this.normalize(summary.projectPath) : "";
     if (normalizedSessionProject === normalizedProject) return true;
+    if (this.isParentSessionForProject(normalizedSessionProject, normalizedProject, summary.filePath)) return true;
     return this.normalize(summary.filePath).includes(this.safePathToken(projectPath));
+  }
+
+  private isParentSessionForProject(sessionProject: string, projectPath: string, filePath: string) {
+    // 早期用户常在 home 目录启动 pi 再操作子项目；这类历史 session 的 cwd 是父目录，
+    // 但文件内容可能明确提到当前项目。仅对父目录 session 做内容校验，避免把无关 home 会话全部展示到子项目下。
+    if (!sessionProject || !projectPath.startsWith(`${sessionProject}/`)) return false;
+    return this.readCachedText(filePath).includes(projectPath);
+  }
+
+  private readCachedText(filePath: string) {
+    try {
+      return readFileSync(filePath, "utf8").replace(/\\/g, "/").toLowerCase();
+    } catch {
+      return "";
+    }
   }
 
   private normalize(path: string) {

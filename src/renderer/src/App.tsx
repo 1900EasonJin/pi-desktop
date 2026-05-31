@@ -2,7 +2,7 @@ import { isValidElement, useEffect, useMemo, useRef, useState, type PointerEvent
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { createPreviewApi } from "./previewApi";
-import type { AgentRuntimeState, AgentTab, AppSettings, AvailableModel, ChatMessage, FileTreeNode, GitBranchInfo, PiCommand, Project, SessionSummary } from "../../shared/types";
+import type { AgentRuntimeState, AgentTab, AppInfo, AppSettings, AvailableModel, ChatMessage, FileTreeNode, GitBranchInfo, PiCommand, PiInstallStatus, Project, SessionSummary } from "../../shared/types";
 
 type DrawerPanel = "files" | "sessions";
 
@@ -32,8 +32,12 @@ export function App() {
   const [drawer, setDrawer] = useState<DrawerPanel | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [agentLoading, setAgentLoading] = useState<{ text: string } | null>(null);
-  const [settings, setSettings] = useState<AppSettings>({ useNativeTitleBar: true, showNativeMenu: false, sendShortcut: "enter-send" });
+  const [settings, setSettings] = useState<AppSettings>({ useNativeTitleBar: true, showNativeMenu: false, sendShortcut: "enter-send", piEnvironmentChecked: false });
   const [settingsNotice, setSettingsNotice] = useState("");
+  const [piStatus, setPiStatus] = useState<PiInstallStatus | null>(null);
+  const [appInfo, setAppInfo] = useState<AppInfo>({ version: "-", releasesUrl: "https://github.com/ayuayue/pi-desktop/releases" });
+  const [piChecking, setPiChecking] = useState(false);
+  const [environmentDialog, setEnvironmentDialog] = useState(false);
   const [listWidth, setListWidth] = useState(300);
   const [drawerWidth, setDrawerWidth] = useState(360);
   const [listCollapsed, setListCollapsed] = useState(false);
@@ -52,10 +56,21 @@ export function App() {
   const filteredProjects = useMemo(() => projects.filter(project => matches(project.name + project.path, search)), [projects, search]);
 
   useEffect(() => {
-    void refreshProjects();
-    void api.agents.list().then(setAgents);
-    void api.settings.get().then(setSettings);
+    window.setTimeout(() => void refreshProjects(), 0);
+    window.setTimeout(() => void api.agents.list().then(setAgents), 0);
+    void api.app.info().then(setAppInfo).catch(() => undefined);
+    void api.settings.get().then(next => {
+      setSettings(next);
+      if (!next.piEnvironmentChecked) {
+        // 首次检测延后一帧启动，先让主界面完成绘制，避免 packaged app 打开时出现几秒白屏。
+        window.setTimeout(() => void checkPiInstall("startup"), 300);
+      }
+    });
 
+    const offProjects = api.projects.onChanged(next => {
+      setProjects(next);
+      if (!activeProjectId && next.length > 0) setActiveProjectId(next[0].id);
+    });
     const offState = api.agents.onState(nextAgents => {
       setAgents(nextAgents);
       setActiveAgentId(current => current && nextAgents.some(agent => agent.id === current) ? current : undefined);
@@ -64,7 +79,7 @@ export function App() {
     const offLog = api.agents.onLog(payload => setLogs(current => [...current.slice(-200), `[${payload.agentId.slice(0, 8)}] ${payload.text}`]));
     const offSettings = api.settings.onApplyWindow(() => setSettingsNotice("标题栏样式需要重启应用后生效。"));
 
-    return () => { offState(); offMessages(); offLog(); offSettings(); };
+    return () => { offProjects(); offState(); offMessages(); offLog(); offSettings(); };
   }, []);
 
   useEffect(() => {
@@ -103,6 +118,25 @@ export function App() {
     void api.git.branches(activeProjectId).then(setGitInfo).catch(() => setGitInfo({ current: null, branches: [] }));
     void refreshSessions(activeProjectId);
   }, [activeProjectId, agents.length]);
+
+  async function checkPiInstall(source: "startup" | "manual" = "manual") {
+    setSettingsOpen(false);
+    setPiChecking(true);
+    setEnvironmentDialog(true);
+    try {
+      const next = await api.pi.check();
+      setPiStatus(next);
+      if (next.installed && source === "startup") {
+        // 首次启动检测通过后落盘，后续启动不再阻塞/打扰；用户仍可在设置里手动重新检测。
+        const saved = await api.settings.update({ piEnvironmentChecked: true });
+        setSettings(saved);
+        window.setTimeout(() => setEnvironmentDialog(false), 3000);
+      }
+      if (next.installed && source === "manual") window.setTimeout(() => setEnvironmentDialog(false), 3000);
+    } finally {
+      setPiChecking(false);
+    }
+  }
 
   async function refreshProjects() {
     const next = await api.projects.list();
@@ -356,10 +390,17 @@ export function App() {
       {fileMenu && <FileContextMenu menu={fileMenu} onClose={() => setFileMenu(null)} onOpen={() => { void api.files.open(fileMenu.node.path); setFileMenu(null); }} onReveal={() => { void api.files.showInFolder(fileMenu.node.path); setFileMenu(null); }} onAttach={() => { setPrompt(current => `${current}${current.endsWith(" ") || current.length === 0 ? "" : " "}@${fileMenu.node.relativePath} `); setFileMenu(null); }} />}
       {agentMenu && <AgentContextMenu menu={agentMenu} onClose={() => setAgentMenu(null)} onActivate={() => { setActiveAgentId(agentMenu.agent.id); setActiveProjectId(agentMenu.agent.projectId); setAgentMenu(null); }} onExport={() => { void exportAgentHtml(agentMenu.agent.id); setAgentMenu(null); }} onCloseAgent={() => { void closeAgent(agentMenu.agent.id); setAgentMenu(null); }} />}
       {toast && <div className="toast">{toast}</div>}
+      {environmentDialog && <EnvironmentDialog status={piStatus} checking={piChecking} onClose={() => setEnvironmentDialog(false)} onRecheck={() => checkPiInstall("manual")} />}
       {modelPickerOpen && <ModelPicker models={availableModels} onClose={() => setModelPickerOpen(false)} onPick={selectModel} />}
-      {settingsOpen && <SettingsModal settings={settings} notice={settingsNotice} onClose={() => setSettingsOpen(false)} onChange={updateSettings} />}
+      {settingsOpen && <SettingsModal settings={settings} notice={settingsNotice} piStatus={piStatus} piChecking={piChecking} appInfo={appInfo} onCheckPi={() => checkPiInstall("manual")} onCheckUpdate={() => api.app.openExternal(appInfo.releasesUrl)} onClose={() => setSettingsOpen(false)} onChange={updateSettings} />}
     </div>
   );
+}
+
+function EnvironmentDialog(props: { status: PiInstallStatus | null; checking: boolean; onClose: () => void; onRecheck: () => void }) {
+  const installed = props.status?.installed;
+  const searchedDirs = props.status?.searchedDirs.slice(0, 16) ?? [];
+  return <div className="modal-backdrop environment-backdrop"><section className="environment-modal"><div className="modal-header"><strong>pi 环境检测</strong><button onClick={props.onClose}>×</button></div><div className="environment-body">{props.checking ? <div className="check-row"><div className="loader" /><span>正在检测 pi CLI…</span></div> : installed ? <div className="env-success"><strong>检测通过</strong><span>已找到 {props.status?.command} {props.status?.version ? `(${props.status.version})` : ""}</span><small>窗口将在 3 秒后自动关闭。</small></div> : <><p className="lead">没有检测到可用的 <strong>pi</strong> 命令。你仍可浏览项目，但创建 agent 前需要先安装并配置 pi CLI。</p><div className="setup-steps"><div><strong>打开官方安装指引</strong><span>请按 pi 官方 quickstart 安装并配置 CLI。</span><button onClick={() => api.app.openExternal("https://pi.dev/docs/latest/quickstart#install")}>打开安装文档</button></div><div><strong>配置后重新检测</strong><span>安装完成后重新打开应用，或点击下方“重新检测”。</span></div></div>{props.status?.error && <pre className="onboarding-error">{props.status.error}</pre>}</>}</div><div className="environment-footer"><button onClick={props.onRecheck} disabled={props.checking}>重新检测</button></div><div className="searched-paths"><strong>检测路径</strong>{searchedDirs.length > 0 ? <ul>{searchedDirs.map(dir => <li key={dir}>{dir}</li>)}</ul> : <span>检测完成后显示已搜索路径。</span>}</div></section></div>;
 }
 
 function SessionStatus(props: { state?: AgentRuntimeState }) {
@@ -554,6 +595,6 @@ function fuzzyScore(value: string, keyword: string) {
   return score;
 }
 
-function SettingsModal(props: { settings: AppSettings; notice: string; onClose: () => void; onChange: (patch: Partial<AppSettings>) => void }) {
-  return <div className="modal-backdrop" onClick={props.onClose}><div className="settings-modal" onClick={event => event.stopPropagation()}><div className="modal-header"><strong>设置</strong><button onClick={props.onClose}>×</button></div><div className="settings-panel"><label><input type="checkbox" checked={props.settings.useNativeTitleBar} onChange={event => props.onChange({ useNativeTitleBar: event.target.checked })} /> 使用原生标题栏</label><label><input type="checkbox" checked={props.settings.showNativeMenu} onChange={event => props.onChange({ showNativeMenu: event.target.checked })} /> 显示原生菜单</label><div className="setting-field"><span>发送快捷键</span><select value={props.settings.sendShortcut} onChange={event => props.onChange({ sendShortcut: event.target.value as AppSettings["sendShortcut"] })}><option value="enter-send">Enter 发送，Ctrl/Shift+Enter 换行</option><option value="ctrl-enter-send">Ctrl/⌘ + Enter 发送，Enter 换行</option><option value="shift-enter-send">Shift + Enter 发送，Enter 换行</option></select></div><p>{props.notice || "标题栏设置保存后需要重启应用生效。"}</p></div></div></div>;
+function SettingsModal(props: { settings: AppSettings; notice: string; piStatus: PiInstallStatus | null; piChecking: boolean; appInfo: AppInfo; onCheckPi: () => void; onCheckUpdate: () => void; onClose: () => void; onChange: (patch: Partial<AppSettings>) => void }) {
+  return <div className="modal-backdrop" onClick={props.onClose}><div className="settings-modal" onClick={event => event.stopPropagation()}><div className="modal-header"><strong>设置</strong><button onClick={props.onClose}>×</button></div><div className="settings-panel"><label><input type="checkbox" checked={props.settings.useNativeTitleBar} onChange={event => props.onChange({ useNativeTitleBar: event.target.checked })} /> 使用原生标题栏</label><label><input type="checkbox" checked={props.settings.showNativeMenu} onChange={event => props.onChange({ showNativeMenu: event.target.checked })} /> 显示原生菜单</label><div className="setting-field"><span>发送快捷键</span><select value={props.settings.sendShortcut} onChange={event => props.onChange({ sendShortcut: event.target.value as AppSettings["sendShortcut"] })}><option value="enter-send">Enter 发送，Ctrl/Shift+Enter 换行</option><option value="ctrl-enter-send">Ctrl/⌘ + Enter 发送，Enter 换行</option><option value="shift-enter-send">Shift + Enter 发送，Enter 换行</option></select></div><div className="setting-row"><div><strong>pi 环境</strong><small>{props.piStatus ? props.piStatus.installed ? `已找到 ${props.piStatus.version ?? "pi"}` : "未检测到 pi CLI" : "检查 pi CLI 是否可用"}</small></div><button onClick={props.onCheckPi} disabled={props.piChecking}>{props.piChecking ? "检测中…" : "检测环境"}</button></div><div className="setting-row"><div><strong>当前版本</strong><small>v{props.appInfo.version}</small></div><button onClick={props.onCheckUpdate}>检测更新</button></div><p>{props.notice || "标题栏设置保存后需要重启应用生效。"}</p></div></div></div>;
 }

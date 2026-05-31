@@ -35,6 +35,7 @@ export function createPreviewApi(): PiDesktopApi {
       list: async () => projects,
       add: async () => projects[0],
       remove: async () => projects,
+      onChanged: noop,
     },
     files: {
       list: async () => files,
@@ -48,9 +49,16 @@ export function createPreviewApi(): PiDesktopApi {
       branches: async () => ({ current: "main", branches: ["main", "dev"] }),
       checkout: async (_projectId, branch) => ({ current: branch, branches: ["main", "dev"] }),
     },
+    pi: {
+      check: async () => ({ installed: true, command: "pi", version: "preview", searchedDirs: [] }),
+    },
+    app: {
+      info: async () => ({ version: "preview", releasesUrl: "https://github.com/ayuayue/pi-desktop/releases" }),
+      openExternal: async () => undefined,
+    },
     settings: {
-      get: async (): Promise<AppSettings> => ({ useNativeTitleBar: true, showNativeMenu: false, sendShortcut: "enter-send" }),
-      update: async (patch): Promise<AppSettings> => ({ useNativeTitleBar: true, showNativeMenu: false, sendShortcut: "enter-send", ...patch }),
+      get: async (): Promise<AppSettings> => ({ useNativeTitleBar: true, showNativeMenu: false, sendShortcut: "enter-send", piEnvironmentChecked: true }),
+      update: async (patch): Promise<AppSettings> => ({ useNativeTitleBar: true, showNativeMenu: false, sendShortcut: "enter-send", piEnvironmentChecked: true, ...patch }),
       onApplyWindow: noop,
     },
     agents: {
