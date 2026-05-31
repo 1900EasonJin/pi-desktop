@@ -13,6 +13,10 @@ A desktop workbench for running and managing multiple [pi](https://pi.dev) codin
 ![Electron](https://img.shields.io/badge/Electron-38-47848f)
 ![React](https://img.shields.io/badge/React-19-61dafb)
 
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md) for English release notes, or [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md) for Chinese release notes.
+
 ## Features
 
 - **Multi-project workspace**

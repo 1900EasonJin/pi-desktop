@@ -11,6 +11,10 @@
 ![Electron](https://img.shields.io/badge/Electron-38-47848f)
 ![React](https://img.shields.io/badge/React-19-61dafb)
 
+## 更新日志
+
+查看中文版本说明：[CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，英文版本说明：[CHANGELOG.md](CHANGELOG.md)。
+
 ## 功能特性
 
 - **多项目工作区**
