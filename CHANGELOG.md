@@ -4,6 +4,16 @@
 
 All notable changes to pi-desktop are documented here.
 
+## v0.4.1 - 2026-06-03
+
+### Improved
+- User messages now display as plain text instead of Markdown, preventing special characters from being misinterpreted.
+- Notifications are now only sent when the session ends, not during tool calls.
+- Thinking bubble animation continues to display during tool execution.
+- Hidden the collapse/expand arrow icon in the project list for a cleaner look.
+- Reduced left-side whitespace in the project list for a more compact layout.
+- Adjusted the close button position on agent rows to avoid overlapping with the border.
+
 ## v0.4.0 - 2026-06-02
 
 ### Added
