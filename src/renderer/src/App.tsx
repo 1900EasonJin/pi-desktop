@@ -1088,6 +1088,13 @@ export function App() {
 							{renderedMessages.map((item) =>
 								item.kind === "tool-group" ? (
 									<ToolGroup key={item.id} group={item} />
+								) : item.kind === "response-group" ? (
+									<ResponseBubble
+										key={item.id}
+										group={item}
+										onPreviewImage={setPreviewImage}
+										showThinking={settings.showThinking}
+									/>
 								) : (
 									<ChatBubble
 										key={item.message.id}
@@ -1765,37 +1772,72 @@ function EmptyState(props: { hasProject: boolean; onCreate: () => void }) {
 	);
 }
 
-type RenderMessage = { kind: "message"; message: ChatMessage } | ToolGroupItem;
-
 type ToolGroupItem = {
 	kind: "tool-group";
 	id: string;
 	messages: ChatMessage[];
 };
 
+/** 一次 agent 响应（assistant 文字 + 工具调用）合并为一个 response-group，避免被拆成多个气泡。 */
+type ResponseGroupItem = {
+	kind: "response-group";
+	id: string;
+	/** 该轮响应里所有 assistant 文字合并后的内容 */
+	text: string;
+	/** 该轮响应里的工具调用消息（保持原始顺序） */
+	tools: ChatMessage[];
+	/** 该轮响应里第一条 assistant 消息的思考内容（如果有） */
+	thinking?: string;
+};
+
+type RenderMessage =
+	| { kind: "message"; message: ChatMessage }
+	| ToolGroupItem
+	| ResponseGroupItem;
+
 function groupToolMessages(messages: ChatMessage[]): RenderMessage[] {
 	const result: RenderMessage[] = [];
-	let current: ChatMessage[] = [];
+	// 收集当前轮次里所有非用户消息（assistant 文字 + tool 调用），等遇到下一条用户消息或消息列表末尾时合并成一个 response-group
+	const pendingText: string[] = [];
+	const pendingTools: ChatMessage[] = [];
+	let pendingThinking: string | undefined;
 
-	function flush() {
-		if (current.length === 0) return;
-		// 同一轮问答里的连续 tool 消息聚合显示，减少工具调用刷屏；详情仍保留在每条 tool 的 meta 里可展开查看。
+	function flushResponse() {
+		if (pendingText.length === 0 && pendingTools.length === 0) return;
 		result.push({
-			kind: "tool-group",
-			id: current.map((message) => message.id).join("|"),
-			messages: current,
+			kind: "response-group",
+			id: [
+				...pendingText.map((t) => `t:${t}`),
+				...pendingTools.map((m) => m.id),
+			].join("|"),
+			text: pendingText.join("\n\n"),
+			tools: pendingTools,
+			thinking: pendingThinking,
 		});
-		current = [];
+		pendingText.length = 0;
+		pendingTools.length = 0;
+		pendingThinking = undefined;
 	}
 
 	for (const message of messages) {
-		if (message.role === "tool") current.push(message);
-		else {
-			flush();
+		if (message.role === "user") {
+			flushResponse();
+			result.push({ kind: "message", message });
+		} else if (message.role === "assistant") {
+			if (message.text) pendingText.push(message.text);
+			// 只取第一条 assistant 消息的思考内容，避免同一轮多次 thinking 重复
+			if (!pendingThinking && message.thinking) {
+				pendingThinking = message.thinking;
+			}
+		} else if (message.role === "tool") {
+			pendingTools.push(message);
+		} else {
+			// system / error 等其他角色： flush 后作为独立消息渲染
+			flushResponse();
 			result.push({ kind: "message", message });
 		}
 	}
-	flush();
+	flushResponse();
 	return result;
 }
 
@@ -1941,6 +1983,117 @@ function ToolSummary(props: { message: ChatMessage }) {
 			</button>
 			{expanded && <pre className="tool-detail">{detailText}</pre>}
 		</div>
+	);
+}
+
+/** 一次 agent 响应的合并渲染：assistant 文字 + 工具调用放在同一个气泡里，避免被拆成多条消息。 */
+function ResponseBubble(props: {
+	group: ResponseGroupItem;
+	onPreviewImage: (image: ImageContent) => void;
+	showThinking?: boolean;
+}) {
+	const { group } = props;
+	const [expanded, setExpanded] = useState(false);
+	const [thinkingExpanded, setThinkingExpanded] = useState(false);
+	const cleanText = stripAnsi(group.text);
+	const hasThinking =
+		props.showThinking && group.thinking && group.thinking.length > 0;
+	const thinkingPreviewLen = 200;
+	const thinkingNeedsTruncate =
+		(group.thinking?.length ?? 0) > thinkingPreviewLen;
+	const thinkingDisplayText =
+		thinkingExpanded || !thinkingNeedsTruncate
+			? (group.thinking ?? "")
+			: (group.thinking ?? "").slice(0, thinkingPreviewLen) + "\u2026";
+	const visibleTools = expanded
+		? group.tools
+		: group.tools.slice(0, 3);
+	const running = group.tools.some((m) => m.meta?.status === "running");
+	const failed = group.tools.some(
+		(m) => m.meta?.status === "error" || m.meta?.isError === true,
+	);
+	const firstToolTime = group.tools[0]?.timestamp;
+
+	return (
+		<article
+			className="chat-message assistant"
+			data-message-id={group.id}
+		>
+			<div className="msg-avatar">P</div>
+			<div className="msg-content">
+				<div className="msg-name">
+					<span>pi</span>
+					<time>{firstToolTime ? formatTime(firstToolTime) : ""}</time>
+				</div>
+				{/* 思考过程：与 ChatBubble 里的 thinking 展示保持一致 */}
+				{hasThinking && (
+					<div className="thinking-block">
+						<div
+							className="thinking-header"
+							onClick={() => setThinkingExpanded((v) => !v)}
+						>
+							<Brain size={14} />
+							<span>思考过程</span>
+							<em>{thinkingExpanded ? "收起" : "展开"}</em>
+						</div>
+						{thinkingExpanded && (
+							<div className="thinking-content">
+								{thinkingDisplayText}
+							</div>
+						)}
+						{thinkingNeedsTruncate && !thinkingExpanded && (
+							<button
+								className="thinking-toggle"
+								onClick={() => setThinkingExpanded(true)}
+							>
+								展开全部
+							</button>
+						)}
+					</div>
+				)}
+				{/* 合并后的 assistant 文字 */}
+				{cleanText && (
+					<div className="msg-bubble">
+						<ReactMarkdown
+							remarkPlugins={[remarkGfm]}
+							components={{ pre: CodeBlock, a: MarkdownLink }}
+						>
+							{cleanText}
+						</ReactMarkdown>
+					</div>
+				)}
+				{/* 工具调用：紧凑内联展示，避免拆成独立气泡 */}
+				{group.tools.length > 0 && (
+					<div className="tool-group">
+						<button
+							className="tool-group-header"
+							onClick={() => setExpanded((v) => !v)}
+						>
+							<span>
+								{running
+									? "工具调用中"
+									: failed
+										? "工具调用有错误"
+										: "工具调用"}
+							</span>
+							<strong>{group.tools.length} 条</strong>
+							<em>{expanded ? "收起" : "展开"}</em>
+						</button>
+						<div className="tool-group-list">
+							{visibleTools.map((message) => (
+								<ToolSummary key={message.id} message={message} />
+							))}
+							{!expanded && group.tools.length > visibleTools.length && (
+								<div className="tool-more">
+									还有 {group.tools.length - visibleTools.length}{" "}
+									条工具调用，点击展开查看
+								</div>
+							)}
+						</div>
+					</div>
+				)}
+			</div>
+		</article>
 	);
 }
 
