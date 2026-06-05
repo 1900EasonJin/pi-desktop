@@ -3070,3 +3070,64 @@ body.is-composer-resizing .composer-resize-handle::after {
 	color: #c8cdd5;
 	border-color: #333a45;
 }
+
+/* ── 本次会话修改文件区域 ─────────────────────── */
+
+.modified-files-section {
+	margin-bottom: 10px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid #e8ecf1;
+}
+
+.modified-files-header {
+	font-size: 11px;
+	color: #8a94a3;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	font-weight: 600;
+	padding: 4px 8px;
+	margin-bottom: 4px;
+}
+
+.modified-file-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 8px;
+	border-radius: 6px;
+	font-size: 12px;
+	color: #3b424c;
+	overflow: hidden;
+}
+
+.modified-file-row.running {
+	color: #7d8794;
+}
+
+.modified-file-icon {
+	flex: 0 0 14px;
+	width: 14px;
+	text-align: center;
+	font-size: 11px;
+}
+
+.modified-file-row.running .modified-file-icon {
+	color: #f59e0b;
+	animation: pulse-running 1.5s ease-in-out infinite;
+}
+
+.modified-file-name {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.modified-file-tool {
+	flex: 0 0 auto;
+	font-size: 10px;
+	color: #9ba5b0;
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: #f1f4f7;
+}

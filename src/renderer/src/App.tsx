@@ -172,6 +172,33 @@ export function App() {
 	const activeThinking = activeAgentId
 		? (streamingThinking[activeAgentId] ?? "")
 		: "";
+	/** 当前会话中 agent 修改过的文件（从 tool 消息 meta 中提取） */
+	const modifiedFiles = useMemo(() => {
+		const seen = new Set<string>();
+		const result: { path: string; toolName: string; status: string }[] = [];
+		for (const msg of activeMessages) {
+			if (msg.role !== "tool") continue;
+			const toolName: string | undefined = msg.meta?.toolName as string | undefined;
+			const args: any = msg.meta?.args;
+			const status: string = String(msg.meta?.status ?? "done");
+			// 只收集文件写入/编辑类的工具调用
+			if (!toolName || !/write|edit|create/i.test(toolName)) continue;
+			const filePath =
+				typeof args?.filePath === "string"
+					? args.filePath
+					: typeof args?.path === "string"
+						? args.path
+						: typeof args?.file === "string"
+							? args.file
+							: typeof args?.fileName === "string"
+								? args.fileName
+								: undefined;
+			if (!filePath || seen.has(filePath)) continue;
+			seen.add(filePath);
+			result.push({ path: filePath, toolName, status });
+		}
+		return result;
+	}, [activeMessages]);
 	const outlineItems = useMemo(
 		() => buildOutline(activeMessages),
 		[activeMessages],
@@ -1087,7 +1114,14 @@ export function App() {
 								? `${activeAgent.status} · ${displayPath(activeProject?.path ?? activeAgent.cwd)}`
 								: "选择项目并创建 Agent"}
 						</span>
-						<SessionStatus state={activeRuntimeState} duration={activeAgentId ? sessionDurationByAgent[activeAgentId] : undefined} />
+						<SessionStatus
+							state={activeRuntimeState}
+							duration={
+								activeAgentId
+									? sessionDurationByAgent[activeAgentId]
+									: undefined
+							}
+						/>
 					</div>
 					<div
 						className={`chat-header-actions${activeAgent?.status === "starting" ? " loading" : ""}`}
@@ -1367,6 +1401,7 @@ export function App() {
 						panel={drawer}
 						files={files}
 						sessions={sessions}
+						modifiedFiles={modifiedFiles}
 						expandedDirs={expandedDirs}
 						onToggleDirectory={toggleDirectory}
 						onClose={() => setDrawer(null)}
@@ -1575,7 +1610,10 @@ function EnvironmentDialog(props: {
 	);
 }
 
-function SessionStatus(props: { state?: AgentRuntimeState; duration?: number }) {
+function SessionStatus(props: {
+	state?: AgentRuntimeState;
+	duration?: number;
+}) {
 	if (!props.state) return null;
 	return (
 		<div className="session-status">
@@ -1584,9 +1622,7 @@ function SessionStatus(props: { state?: AgentRuntimeState; duration?: number }) 
 			</span>
 			<span>think: {props.state.thinkingLevel ?? "-"}</span>
 			{props.duration != null && (
-				<span title="本次会话耗时">
-					⏱ {formatDuration(props.duration)}
-				</span>
+				<span title="本次会话耗时">⏱ {formatDuration(props.duration)}</span>
 			)}
 			{props.state.contextPercent != null && (
 				<span>
@@ -2392,6 +2428,7 @@ function DrawerContent(props: {
 	panel: DrawerPanel;
 	files: FileTreeNode[];
 	sessions: SessionSummary[];
+	modifiedFiles: { path: string; toolName: string; status: string }[];
 	expandedDirs: Set<string>;
 	onToggleDirectory: (path: string) => void;
 	onClose: () => void;
@@ -2410,6 +2447,7 @@ function DrawerContent(props: {
 			{props.panel === "files" && (
 				<FilesPanel
 					files={props.files}
+					modifiedFiles={props.modifiedFiles}
 					expandedDirs={props.expandedDirs}
 					onToggleDirectory={props.onToggleDirectory}
 					onFileContextMenu={props.onFileContextMenu}
@@ -2429,12 +2467,36 @@ function DrawerContent(props: {
 
 function FilesPanel(props: {
 	files: FileTreeNode[];
+	/** 当前会话中 agent 修改过的文件 */
+	modifiedFiles: { path: string; toolName: string; status: string }[];
 	expandedDirs: Set<string>;
 	onToggleDirectory: (path: string) => void;
 	onFileContextMenu: (node: FileTreeNode, x: number, y: number) => void;
 }) {
 	return (
 		<div className="files-panel">
+			{props.modifiedFiles.length > 0 && (
+				<div className="modified-files-section">
+					<div className="modified-files-header">本次会话修改</div>
+					{props.modifiedFiles.map((file) => {
+						const fileName = file.path.split(/[/\\]/).pop() ?? file.path;
+						const isRunning = file.status === "running";
+						return (
+							<div
+								key={file.path}
+								className={`modified-file-row${isRunning ? " running" : ""}`}
+								title={file.path}
+							>
+								<span className="modified-file-icon">
+									{isRunning ? "◌" : "✓"}
+								</span>
+								<span className="modified-file-name">{fileName}</span>
+								<span className="modified-file-tool">{file.toolName}</span>
+							</div>
+						);
+					})}
+				</div>
+			)}
 			{props.files.map((node) => (
 				<FileNode
 					key={node.path}
