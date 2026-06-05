@@ -101,12 +101,10 @@ export function App() {
 	const [drawer, setDrawer] = useState<DrawerPanel | null>(null);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [configOpen, setConfigOpen] = useState(false);
-	const [debugOpen, setDebugOpen] = useState(false);
+	const [_debugOpen, _setDebugOpen] = useState(false);
 	/** RPC 日志弹窗目标 agent */
 	const [rpcLogAgentId, setRpcLogAgentId] = useState<string | null>(null);
-	const [agentLoading, setAgentLoading] = useState<{ text: string } | null>(
-		null,
-	);
+	
 	const [settings, setSettings] = useState<AppSettings>({
 		useNativeTitleBar: true,
 		showNativeMenu: false,
@@ -371,17 +369,14 @@ export function App() {
 			setDrawer(null);
 			return;
 		}
-		setAgentLoading({
-			text: sessionPath ? "正在打开历史会话…" : "正在创建 Agent…",
-		});
 		// 立即关闭抽屉，避免等待 agent 加载期间列表仍然显示
 		setDrawer(null);
 		try {
 			const tab = await api.agents.create({ projectId, sessionPath, title });
 			setActiveAgentId(tab.id);
 			void refreshRuntimeState(tab.id);
-		} finally {
-			setAgentLoading(null);
+		} catch (e) {
+			// 创建失败时由 main process 上报错误，前端仅静默处理
 		}
 	}
 
@@ -999,10 +994,9 @@ export function App() {
 						<SessionStatus state={activeRuntimeState} />
 					</div>
 					<div
-						className={`chat-header-actions${agentLoading ? " loading" : ""}`}
+						className={`chat-header-actions${activeAgent?.status === "starting" ? " loading" : ""}`}
 					>
-						{!agentLoading && (
-							<>
+						<>
 								<div className="header-action-group branch-group">
 									<BranchSelector gitInfo={gitInfo} onSwitch={switchBranch} />
 								</div>
@@ -1032,18 +1026,13 @@ export function App() {
 										Reload
 									</button>
 									<button
-										disabled={!activeAgentId || !!agentLoading}
+										disabled={!activeAgentId || activeAgent?.status === "starting"}
 										title="重启 Agent 进程，重新加载配置文件（provider、API key 等）"
 										onClick={async () => {
 											if (!activeAgentId) return;
-											setAgentLoading({ text: "正在重启 Agent…" });
-											try {
-												const tab = await api.agents.restart(activeAgentId);
-												setActiveAgentId(tab.id);
-												void refreshRuntimeState(tab.id);
-											} finally {
-												setAgentLoading(null);
-											}
+											const tab = await api.agents.restart(activeAgentId);
+											setActiveAgentId(tab.id);
+											void refreshRuntimeState(tab.id);
 										}}
 									>
 										Restart
@@ -1070,24 +1059,23 @@ export function App() {
 									</button>
 								</div>
 							</>
-						)}
-					</div>
-				</header>
+						</div>
+					</header>
 
 				<section className="message-timeline" ref={timelineRef}>
-					{agentLoading && (
+					{activeAgent?.status === "starting" && (
 						<div className="history-loading">
 							<div className="loader" />
-							<span>{agentLoading.text}</span>
+							<span>正在启动 Agent…</span>
 						</div>
 					)}
-					{!agentLoading && !activeAgent && (
+					{!activeAgent && (
 						<EmptyState
 							hasProject={Boolean(activeProjectId)}
 							onCreate={() => createAgent()}
 						/>
 					)}
-					{!agentLoading && activeAgent && (
+					{activeAgent && (
 						<div className="message-list">
 							{renderedMessages.map((item) =>
 								item.kind === "tool-group" ? (
@@ -1116,7 +1104,7 @@ export function App() {
 							))}
 						</div>
 					)}
-					{!agentLoading && outlineItems.length > 1 && (
+					{outlineItems.length > 1 && (
 						<ConversationOutline
 							items={outlineItems}
 							onJump={(id) =>
@@ -1128,8 +1116,7 @@ export function App() {
 					)}
 				</section>
 
-				{!agentLoading && (
-					<footer className="composer">
+				<footer className="composer">
 						<div className="composer-box" style={{ height: composerHeight }}>
 							<div
 								className="composer-resize-handle"
@@ -1262,9 +1249,8 @@ export function App() {
 								</button>
 							</div>
 						</div>
-					</footer>
-				)}
-			</main>
+			</footer>
+		</main>
 
 			{drawer && !drawerCollapsed && (
 				<div
