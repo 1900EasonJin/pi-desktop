@@ -95,20 +95,24 @@ export class AgentManager {
 			if (entry.direction === "send") {
 				// 发送的命令：显示类型和关键参数
 				const type = data.type ?? "?";
-				if (type === "prompt") summary = `→ prompt: ${(data.message ?? "").slice(0, 60)}`;
-				else if (type === "set_model") summary = `→ set_model: ${data.provider}/${data.modelId}`;
-				else if (type === "set_thinking_level") summary = `→ set_thinking: ${data.level}`;
-				else if (type === "bash") summary = `→ bash: ${(data.command ?? "").slice(0, 60)}`;
+				if (type === "prompt")
+					summary = `→ prompt: ${(data.message ?? "").slice(0, 60)}`;
+				else if (type === "set_model")
+					summary = `→ set_model: ${data.provider}/${data.modelId}`;
+				else if (type === "set_thinking_level")
+					summary = `→ set_thinking: ${data.level}`;
+				else if (type === "bash")
+					summary = `→ bash: ${(data.command ?? "").slice(0, 60)}`;
 				else summary = `→ ${type}`;
 			} else {
 				// 收到的响应/事件
 				const type = data.type ?? "?";
-				if (type === "response") summary = `← ${data.command ?? "?"} ${data.success ? "✓" : "✗"}${data.error ? ` ${data.error}` : ""}`;
+				if (type === "response")
+					summary = `← ${data.command ?? "?"} ${data.success ? "✓" : "✗"}${data.error ? ` ${data.error}` : ""}`;
 				else if (type === "message_update") {
 					const evt = data.assistantMessageEvent?.type ?? "?";
 					summary = `← message_update.${evt}`;
-				}
-				else summary = `← ${type}`;
+				} else summary = `← ${type}`;
 			}
 			this.emit(ipcChannels.agentsRpcLog, {
 				agentId: id,
@@ -411,13 +415,9 @@ export class AgentManager {
 	}
 
 	async reload(agentId: string) {
-		const runtime = this.requireRuntime(agentId);
-		// RPC 没有专门的 reload command；pi 文档说明 extension/斜线命令应通过 prompt 入口执行。
-		await runtime.process.client.request(
-			{ type: "prompt", message: "/reload" },
-			60_000,
-		);
-		await this.loadMessages(agentId).catch(() => undefined);
+		// pi RPC 目前无法通过 prompt 入口正确发送斜线命令（/reload 会被当作文本），
+		// 因此前端已去掉 Reload 按钮，统一走 restart。此方法保留以兼容 IPC 通道。
+		await this.restart(agentId);
 	}
 
 	/**

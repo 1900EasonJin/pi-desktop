@@ -74,7 +74,7 @@ export function App() {
 	const [prompt, setPrompt] = useState("");
 	/** 当前进行的操作类型，用于按钮 loading 状态 */
 	const [loadingAction, setLoadingAction] = useState<
-		null | "reload" | "restart"
+		null | "restart"
 	>(null);
 	/** 键盘上下键切换的历史消息列表 */
 	const [messageHistory, setMessageHistory] = useState<string[]>([]);
@@ -1089,41 +1089,27 @@ export function App() {
 								>
 									Stop
 								</button>
-								<button
-									disabled={!activeAgentId || loadingAction === "reload"}
-											onClick={async () => {
-												if (!activeAgentId) return;
-												setLoadingAction("reload");
-												try {
-													await api.agents.reload(activeAgentId);
-												} finally {
-													setLoadingAction(null);
-												}
-											}}
-										>
-											{loadingAction === "reload" ? "Reloading…" : "Reload"}
-										</button>
-								<button
-											disabled={
-												!activeAgentId ||
-												activeAgent?.status === "starting" ||
-												!!loadingAction
-											}
-											title="重启 Agent 进程，重新加载配置文件（provider、API key 等）"
-											onClick={async () => {
-												if (!activeAgentId) return;
-												setLoadingAction("restart");
-												try {
-													const tab = await api.agents.restart(activeAgentId);
-													setActiveAgentId(tab.id);
-													void refreshRuntimeState(tab.id);
-												} finally {
-													setLoadingAction(null);
-												}
-											}}
-										>
-											{loadingAction === "restart" ? "Restarting…" : "Restart"}
-										</button>
+									<button
+										disabled={
+											!activeAgentId ||
+											activeAgent?.status === "starting" ||
+											!!loadingAction
+										}
+									title="重启 Agent 进程，重新加载配置文件（provider、API key 等）"
+									onClick={async () => {
+										if (!activeAgentId) return;
+										setLoadingAction("restart");
+										try {
+											const tab = await api.agents.restart(activeAgentId);
+											setActiveAgentId(tab.id);
+											void refreshRuntimeState(tab.id);
+										} finally {
+											setLoadingAction(null);
+										}
+									}}
+								>
+									{loadingAction === "restart" ? "Restarting…" : "Restart"}
+								</button>
 							</div>
 							<div className="header-action-group panel-group">
 								<button
