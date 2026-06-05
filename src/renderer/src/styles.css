@@ -1167,6 +1167,12 @@ body.is-composer-resizing {
 	background: #f8fafc;
 	overflow: hidden;
 }
+
+/* ResponseBubble 内的 tool-group：取消外层偏移，因为已在 msg-content 内对齐。 */
+.chat-message .tool-group {
+	max-width: 100%;
+	margin: 10px 0 0;
+}
 .tool-group-header {
 	width: 100%;
 	display: flex;

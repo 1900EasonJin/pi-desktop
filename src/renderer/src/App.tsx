@@ -2005,9 +2005,7 @@ function ResponseBubble(props: {
 		thinkingExpanded || !thinkingNeedsTruncate
 			? (group.thinking ?? "")
 			: (group.thinking ?? "").slice(0, thinkingPreviewLen) + "\u2026";
-	const visibleTools = expanded
-		? group.tools
-		: group.tools.slice(0, 3);
+	const visibleTools = expanded ? group.tools : group.tools.slice(0, 3);
 	const running = group.tools.some((m) => m.meta?.status === "running");
 	const failed = group.tools.some(
 		(m) => m.meta?.status === "error" || m.meta?.isError === true,
@@ -2015,10 +2013,7 @@ function ResponseBubble(props: {
 	const firstToolTime = group.tools[0]?.timestamp;
 
 	return (
-		<article
-			className="chat-message assistant"
-			data-message-id={group.id}
-		>
+		<article className="chat-message assistant" data-message-id={group.id}>
 			<div className="msg-avatar">P</div>
 			<div className="msg-content">
 				<div className="msg-name">
@@ -2037,9 +2032,7 @@ function ResponseBubble(props: {
 							<em>{thinkingExpanded ? "收起" : "展开"}</em>
 						</div>
 						{thinkingExpanded && (
-							<div className="thinking-content">
-								{thinkingDisplayText}
-							</div>
+							<div className="thinking-content">{thinkingDisplayText}</div>
 						)}
 						{thinkingNeedsTruncate && !thinkingExpanded && (
 							<button
