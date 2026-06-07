@@ -3,6 +3,7 @@ import {
 	useEffect,
 	useRef,
 	useState,
+	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -408,31 +409,76 @@ export type ToolGroupItem = {
 	messages: ChatMessage[];
 };
 
-export type RenderMessage = { kind: "message"; message: ChatMessage } | ToolGroupItem;
+export type MessageItem = { kind: "message"; message: ChatMessage };
+
+export type AgentRunItem = {
+	kind: "agent-run";
+	id: string;
+	items: Array<MessageItem | ToolGroupItem>;
+	startedAt: number;
+	endedAt: number;
+};
+
+export type RenderMessage = MessageItem | ToolGroupItem | AgentRunItem;
 
 export function groupToolMessages(messages: ChatMessage[]): RenderMessage[] {
 	const result: RenderMessage[] = [];
-	let current: ChatMessage[] = [];
+	let currentTools: ChatMessage[] = [];
+	let currentRun: Array<MessageItem | ToolGroupItem> = [];
+	let runStartedAt = 0;
+	let runEndedAt = 0;
 
-	function flush() {
-		if (current.length === 0) return;
+	function flushTools() {
+		if (currentTools.length === 0) return;
 		// 同一轮问答里的连续 tool 消息聚合显示，减少工具调用刷屏；详情仍保留在每条 tool 的 meta 里可展开查看。
-		result.push({
+		const group: ToolGroupItem = {
 			kind: "tool-group",
-			id: current.map((message) => message.id).join("|"),
-			messages: current,
+			id: currentTools.map((message) => message.id).join("|"),
+			messages: currentTools,
+		};
+		currentRun.push(group);
+		runEndedAt = currentTools[currentTools.length - 1]?.timestamp ?? runEndedAt;
+		currentTools = [];
+	}
+
+	function flushRun() {
+		flushTools();
+		if (currentRun.length === 0) return;
+		result.push({
+			kind: "agent-run",
+			id: currentRun
+				.map((item) =>
+					item.kind === "tool-group" ? item.id : item.message.id,
+				)
+				.join("|"),
+			items: currentRun,
+			startedAt: runStartedAt,
+			endedAt: runEndedAt || runStartedAt,
 		});
-		current = [];
+		currentRun = [];
+		runStartedAt = 0;
+		runEndedAt = 0;
+	}
+
+	function appendRunMessage(message: ChatMessage) {
+		flushTools();
+		if (currentRun.length === 0) runStartedAt = message.timestamp;
+		runEndedAt = message.timestamp;
+		currentRun.push({ kind: "message", message });
 	}
 
 	for (const message of messages) {
-		if (message.role === "tool") current.push(message);
-		else {
-			flush();
+		if (message.role === "assistant") {
+			appendRunMessage(message);
+		} else if (message.role === "tool") {
+			if (currentRun.length === 0) runStartedAt = message.timestamp;
+			currentTools.push(message);
+		} else {
+			flushRun();
 			result.push({ kind: "message", message });
 		}
 	}
-	flush();
+	flushRun();
 	return result;
 }
 
@@ -524,62 +570,128 @@ export function PendingBubble(props: {
 
 export function ToolGroup(props: { group: ToolGroupItem }) {
 	const [expanded, setExpanded] = useState(false);
-	const visible = expanded
-		? props.group.messages
-		: props.group.messages.slice(0, 3);
-	// 工具启动消息永远保留 status "running"，所以需要检查最后一条消息的状态来判断是否还在执行中
+	// 工具消息按 toolCallId 原地更新；最后一条仍为 running 时，表示当前工具组还没收尾。
 	const running =
 		props.group.messages.length > 0 &&
 		props.group.messages[props.group.messages.length - 1].meta?.status ===
 			"running";
+	const errorCount = props.group.messages.filter(
+		(message) =>
+			message.meta?.status === "error" || message.meta?.isError === true,
+	).length;
 	const failed = props.group.messages.some(
 		(message) =>
 			message.meta?.status === "error" || message.meta?.isError === true,
 	);
+	const visibleChips = props.group.messages.slice(0, 6);
+	const hiddenCount = props.group.messages.length - visibleChips.length;
 	return (
-		<article className="tool-group" data-message-id={props.group.id}>
+		<article
+			className={`tool-group ${running ? "running" : failed ? "error" : "done"}`}
+			data-message-id={props.group.id}
+		>
 			<button
 				className="tool-group-header"
 				onClick={() => setExpanded((value) => !value)}
 			>
-				<span>
-					{running ? "工具调用中" : failed ? "工具调用有错误" : "工具调用"}
+				<span className="tool-status-dot" />
+				<span className="tool-group-title">
+					{running ? "工具调用中" : failed ? "工具调用有错误" : "工具调用完成"}
 				</span>
-				<strong>{props.group.messages.length} 条</strong>
-				<em>{expanded ? "收起" : "展开"}</em>
+				<strong>
+					{props.group.messages.length} 个工具
+					{errorCount > 0 ? ` · ${errorCount} 个失败` : ""}
+				</strong>
+				<em>{expanded ? "收起" : "详情"}</em>
 			</button>
-			<div className="tool-group-list">
-				{visible.map((message) => (
-					<ToolSummary key={message.id} message={message} />
-				))}
-				{!expanded && props.group.messages.length > visible.length && (
-					<div className="tool-more">
-						还有 {props.group.messages.length - visible.length}{" "}
-						条工具调用，点击展开查看
-					</div>
-				)}
-			</div>
+			{expanded ? (
+				<div className="tool-group-list">
+					{props.group.messages.map((message) => (
+						<ToolSummary key={message.id} message={message} />
+					))}
+				</div>
+			) : (
+				<div className="tool-compact-row">
+					{visibleChips.map((message) => (
+						<ToolChip key={message.id} message={message} />
+					))}
+					{hiddenCount > 0 && (
+						<span className="tool-chip muted">+{hiddenCount}</span>
+					)}
+				</div>
+			)}
 		</article>
+	);
+}
+
+function ToolChip(props: { message: ChatMessage }) {
+	const status = String(props.message.meta?.status ?? "done");
+	const toolName = String(props.message.meta?.toolName ?? props.message.text);
+	return (
+		<span className={`tool-chip ${status}`} title={props.message.text}>
+			{toolName}
+		</span>
 	);
 }
 
 function ToolSummary(props: { message: ChatMessage }) {
 	const [expanded, setExpanded] = useState(false);
+	const status = String(props.message.meta?.status ?? "done");
+	const toolName = String(props.message.meta?.toolName ?? props.message.text);
+	const statusLabel =
+		status === "running" ? "运行中" : status === "error" ? "失败" : "完成";
 	const detailText =
 		typeof props.message.meta?.detailText === "string"
 			? props.message.meta.detailText
 			: JSON.stringify(props.message.meta ?? {}, null, 2);
 	return (
-		<div className={`tool-summary ${String(props.message.meta?.status ?? "")}`}>
+		<div className={`tool-summary ${status}`}>
 			<div>
-				<strong>{props.message.text}</strong>
-				<small>{formatTime(props.message.timestamp)}</small>
+				<strong>{toolName}</strong>
+				<small>
+					{statusLabel} · {formatTime(props.message.timestamp)}
+				</small>
 			</div>
 			<button onClick={() => setExpanded((value) => !value)}>
 				{expanded ? "收起" : "详情"}
 			</button>
 			{expanded && <pre className="tool-detail">{detailText}</pre>}
 		</div>
+	);
+}
+
+export function AgentRun(props: {
+	run: AgentRunItem;
+	onPreviewImage: (image: ImageContent) => void;
+	showThinking?: boolean;
+	onOpenExternal: (url: string) => void;
+}) {
+	return (
+		<article className="agent-run" data-message-id={props.run.id}>
+			<div className="msg-avatar">P</div>
+			<div className="agent-run-content">
+				<div className="msg-name">
+					<span>pi</span>
+					<time>{formatTime(props.run.endedAt)}</time>
+				</div>
+				<div className="agent-run-stack">
+					{props.run.items.map((item) =>
+						item.kind === "tool-group" ? (
+							<ToolGroup key={item.id} group={item} />
+						) : (
+							<ChatBubble
+								key={item.message.id}
+								message={item.message}
+								onPreviewImage={props.onPreviewImage}
+								onOpenExternal={props.onOpenExternal}
+								showThinking={props.showThinking}
+								compact
+							/>
+						),
+					)}
+				</div>
+			</div>
+		</article>
 	);
 }
 
@@ -614,6 +726,7 @@ export function ChatBubble(props: {
 	onPreviewImage: (image: ImageContent) => void;
 	showThinking?: boolean;
 	onOpenExternal: (url: string) => void;
+	compact?: boolean;
 }) {
 	const { message } = props;
 	const [expanded, setExpanded] = useState(false);
@@ -644,7 +757,12 @@ export function ChatBubble(props: {
 	return (
 		<article
 			data-message-id={message.id}
-			className={isUser ? "chat-message mine" : `chat-message ${message.role}`}
+			className={[
+				isUser ? "chat-message mine" : `chat-message ${message.role}`,
+				props.compact ? "compact-message" : "",
+			]
+				.filter(Boolean)
+				.join(" ")}
 		>
 			<div className="msg-avatar">
 				{isUser ? "我" : label.slice(0, 1).toUpperCase()}
@@ -901,19 +1019,72 @@ export function ConversationOutline(props: {
 	onJump: (id: string) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
+	const [dragging, setDragging] = useState(false);
+	const [top, setTop] = useState(() => getInitialOutlineTop());
+	const dragRef = useRef<{ startY: number; startTop: number } | null>(null);
+	const topRef = useRef(top);
 	const visibleItems = expanded ? props.items : props.items.slice(-15);
 	const hasMore = props.items.length > 15;
+
+	useEffect(() => {
+		topRef.current = top;
+	}, [top]);
+
+	useEffect(() => {
+		if (!dragging) return;
+		function onMove(event: PointerEvent) {
+			const drag = dragRef.current;
+			if (!drag) return;
+			setTop(clampOutlineTop(drag.startTop + event.clientY - drag.startY));
+		}
+		function onUp() {
+			setDragging(false);
+			dragRef.current = null;
+			localStorage.setItem(OUTLINE_TOP_STORAGE_KEY, String(topRef.current));
+		}
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
+		return () => {
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+		};
+	}, [dragging]);
+
+	useEffect(() => {
+		const onResize = () => setTop((value) => clampOutlineTop(value));
+		window.addEventListener("resize", onResize);
+		return () => window.removeEventListener("resize", onResize);
+	}, []);
+
+	function startDrag(event: ReactPointerEvent<HTMLElement>) {
+		event.preventDefault();
+		event.stopPropagation();
+		dragRef.current = { startY: event.clientY, startTop: topRef.current };
+		setDragging(true);
+	}
+
 	return (
-		<div className="outline-hover">
+		<div
+			className={`outline-hover${dragging ? " dragging" : ""}`}
+			style={{ top }}
+		>
 			<button
 				className="outline-trigger"
 				title={`会话定位 · ${props.items.length} 条`}
+				onPointerDown={startDrag}
 			>
 				☰
 			</button>
 			<nav className="conversation-outline">
 				<div className="outline-title">
-					会话定位
+					<span
+						className="outline-drag-handle"
+						title="拖动调整位置"
+						onPointerDown={startDrag}
+					>
+						⋮⋮
+					</span>
+					<span>会话定位</span>
 					<span className="outline-count">{props.items.length}</span>
 				</div>
 				<div className="outline-list">
@@ -941,6 +1112,20 @@ export function ConversationOutline(props: {
 			</nav>
 		</div>
 	);
+}
+
+const OUTLINE_TOP_STORAGE_KEY = "pi-desktop:outline-top";
+
+function getInitialOutlineTop() {
+	if (typeof window === "undefined") return 180;
+	const saved = Number(localStorage.getItem(OUTLINE_TOP_STORAGE_KEY));
+	if (Number.isFinite(saved) && saved > 0) return clampOutlineTop(saved);
+	return clampOutlineTop(Math.round(window.innerHeight * 0.32));
+}
+
+function clampOutlineTop(value: number) {
+	if (typeof window === "undefined") return value;
+	return Math.min(window.innerHeight - 92, Math.max(76, value));
 }
 
 export function DrawerContent(props: {

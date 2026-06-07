@@ -163,6 +163,7 @@ export function TerminalDock(props: {
 
 		xtermRef.current = terminal;
 		fitRef.current = fit;
+		requestAnimationFrame(() => terminal.focus());
 		return () => {
 			observer.disconnect();
 			dataDisposable.dispose();
@@ -180,6 +181,11 @@ export function TerminalDock(props: {
 			);
 		}
 	}, [props.height, activeTab, props.terminal]);
+
+	useEffect(() => {
+		if (collapsed || !activeTab || activeTab.exited) return;
+		requestAnimationFrame(() => xtermRef.current?.focus());
+	}, [activeTab?.id, activeTab?.exited, collapsed]);
 
 	async function addTab() {
 		const next = await props.terminal.create(props.agentId);

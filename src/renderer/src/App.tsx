@@ -18,6 +18,7 @@ import { ConfigModal } from "./ConfigModal";
 import { TerminalDock } from "./components/terminal/TerminalDock";
 import {
 	AgentAvatar,
+	AgentRun,
 	AgentContextMenu,
 	BranchSelector,
 	ChatBubble,
@@ -1369,7 +1370,15 @@ export function App() {
 					{activeAgent && (
 						<div className="message-list">
 							{renderedMessages.map((item) =>
-								item.kind === "tool-group" ? (
+								item.kind === "agent-run" ? (
+									<AgentRun
+										key={item.id}
+										run={item}
+										onPreviewImage={setPreviewImage}
+										onOpenExternal={(url) => api.app.openExternal(url)}
+										showThinking={settings.showThinking}
+									/>
+								) : item.kind === "tool-group" ? (
 									<ToolGroup key={item.id} group={item} />
 								) : (
 									<ChatBubble

@@ -20,6 +20,10 @@ export class AgentManager {
 	private readonly messages = new Map<string, ChatMessage[]>();
 	/** 当前流式思考的累积文本，用于实时推送给前端展示 */
 	private readonly streamingThinking = new Map<string, string>();
+	/** 当前正在流式更新的 assistant 消息；tool 事件插入时仍要继续更新同一个回答块。 */
+	private readonly activeAssistantMessageIds = new Map<string, string>();
+	/** pi 的 toolCallId 贯穿 start/update/end，用它把同一次工具调用合并成一条 UI 记录。 */
+	private readonly toolMessageIds = new Map<string, Map<string, string>>();
 
 	constructor(
 		private readonly getProject: (id: string) => Project | undefined,
@@ -507,7 +511,14 @@ export class AgentManager {
 
 		if (typed.type === "agent_start" && runtime) {
 			runtime.tab.status = "running";
+			this.activeAssistantMessageIds.delete(agentId);
+			this.toolMessageIds.delete(agentId);
 			this.emitState();
+		}
+
+		if (typed.type === "message_start" && typed.message?.role === "assistant") {
+			this.beginAssistantMessage(agentId);
+			this.upsertAssistantMessage(agentId, typed.message);
 		}
 
 		if (typed.type === "agent_end") {
@@ -517,6 +528,8 @@ export class AgentManager {
 				runtime.tab.status = "idle";
 				// 清理流式思考状态
 				this.streamingThinking.delete(agentId);
+				this.activeAssistantMessageIds.delete(agentId);
+				this.toolMessageIds.delete(agentId);
 				this.emitThinking(agentId, "");
 			}
 			// agent 异常结束时（如 API 返回 400、模型报错等），将错误提示写入会话，避免用户看到空白。
@@ -574,47 +587,22 @@ export class AgentManager {
 
 		if (
 			typed.type === "message_update" &&
-			typed.assistantMessageEvent?.type === "text_delta"
+			typed.assistantMessageEvent
 		) {
-			this.appendAssistantDelta(
-				agentId,
-				String(typed.assistantMessageEvent.delta ?? ""),
-			);
+			this.handleAssistantMessageEvent(agentId, typed);
 		}
 
-		// 捕获思考内容流，通过 IPC 实时推送给前端，避免用户感觉模型“卡住”
 		if (
-			typed.type === "message_update" &&
-			typed.assistantMessageEvent?.type === "thinking_delta"
+			typed.type === "message_end" &&
+			typed.message?.role === "assistant" &&
+			this.activeAssistantMessageIds.has(agentId)
 		) {
-			const prev = this.streamingThinking.get(agentId) ?? "";
-			const delta = String(typed.assistantMessageEvent.delta ?? "");
-			this.streamingThinking.set(agentId, prev + delta);
-			this.emitThinking(agentId, this.stripAnsi(prev + delta));
-		}
-		// thinking_end 时保留思考文本，等 text_delta 创建 assistant 消息时再附加
-		// 因为 thinking_end 在 text_delta 之前触发，此时还没有 assistant 消息
-		if (
-			typed.type === "message_update" &&
-			typed.assistantMessageEvent?.type === "thinking_end"
-		) {
-			const finalThinking = String(
-				typed.assistantMessageEvent.content ??
-					this.streamingThinking.get(agentId) ??
-					"",
-			);
-			if (finalThinking) {
-				this.streamingThinking.set(agentId, finalThinking);
-			}
-			// 不立即清除，等 appendAssistantDelta 附加到消息后再清除
+			this.upsertAssistantMessage(agentId, typed.message);
+			this.activeAssistantMessageIds.delete(agentId);
 		}
 
 		if (typed.type === "tool_execution_start") {
-			this.addMessage(agentId, "tool", `▶ ${typed.toolName || "tool"}`, {
-				status: "running",
-				toolName: typed.toolName,
-				args: typed.args,
-			});
+			this.upsertToolMessage(agentId, typed, "running");
 			// 工具调用开始时确保 agent 状态为 running，保持 thinking bubble 显示
 			if (runtime) {
 				runtime.tab.status = "running";
@@ -623,24 +611,10 @@ export class AgentManager {
 		}
 
 		if (typed.type === "tool_execution_end") {
-			const detailText = this.formatToolDetail(
-				typed.toolName,
-				typed.args,
-				typed.result,
-				typed.isError,
-			);
-			this.addMessage(
+			this.upsertToolMessage(
 				agentId,
-				"tool",
-				`✓ ${typed.toolName || "tool"}${typed.isError ? " failed" : " done"}`,
-				{
-					status: typed.isError ? "error" : "done",
-					toolName: typed.toolName,
-					args: typed.args,
-					result: typed.result,
-					isError: typed.isError,
-					detailText,
-				},
+				typed,
+				typed.isError ? "error" : "done",
 			);
 			// 工具调用完成后保持 agent 状态为 running，等待后续的 agent_end 事件
 			// 这样在工具完成到 agent 生成回复之间，thinking bubble 仍然会显示
@@ -648,6 +622,10 @@ export class AgentManager {
 				runtime.tab.status = "running";
 				this.emitState();
 			}
+		}
+
+		if (typed.type === "tool_execution_update") {
+			this.upsertToolMessage(agentId, typed, "running");
 		}
 
 		if (typed.type === "extension_error") {
@@ -659,28 +637,177 @@ export class AgentManager {
 		}
 	}
 
-	private appendAssistantDelta(agentId: string, delta: string) {
-		const list = this.messages.get(agentId) ?? [];
-		const last = list[list.length - 1];
+	private handleAssistantMessageEvent(agentId: string, event: Record<string, any>) {
+		const assistantEvent = event.assistantMessageEvent as Record<string, any>;
+		const eventType = assistantEvent.type as string | undefined;
+		const partialMessage =
+			event.message ??
+			assistantEvent.message ??
+			assistantEvent.partial ??
+			assistantEvent.partialMessage;
 
-		if (last?.role === "assistant") {
-			last.text += delta;
+		if (eventType === "start" || eventType === "message_start") {
+			this.beginAssistantMessage(agentId);
+			this.upsertAssistantMessage(agentId, partialMessage);
+			return;
+		}
+
+		if (eventType === "text_start" || eventType === "text_end") {
+			this.upsertAssistantMessage(agentId, partialMessage);
+			return;
+		}
+
+		if (eventType === "text_delta") {
+			this.upsertAssistantMessage(
+				agentId,
+				partialMessage,
+				String(assistantEvent.delta ?? ""),
+			);
+			return;
+		}
+
+		if (eventType === "thinking_delta") {
+			const prev = this.streamingThinking.get(agentId) ?? "";
+			const delta = String(assistantEvent.delta ?? "");
+			this.streamingThinking.set(agentId, prev + delta);
+			this.emitThinking(agentId, this.stripAnsi(prev + delta));
+			this.upsertAssistantMessage(agentId, partialMessage);
+			return;
+		}
+
+		if (eventType === "thinking_end") {
+			const finalThinking = String(
+				assistantEvent.content ?? this.streamingThinking.get(agentId) ?? "",
+			);
+			if (finalThinking) {
+				this.streamingThinking.set(agentId, finalThinking);
+			}
+			this.upsertAssistantMessage(agentId, partialMessage);
+			return;
+		}
+
+		if (eventType === "message_end" || eventType === "done" || eventType === "error") {
+			this.upsertAssistantMessage(agentId, partialMessage);
+			this.activeAssistantMessageIds.delete(agentId);
+		}
+	}
+
+	private beginAssistantMessage(agentId: string) {
+		if (!this.activeAssistantMessageIds.has(agentId)) {
+			this.activeAssistantMessageIds.set(agentId, randomUUID());
+		}
+	}
+
+	private upsertAssistantMessage(
+		agentId: string,
+		partialMessage?: unknown,
+		fallbackDelta = "",
+	) {
+		const list = this.messages.get(agentId) ?? [];
+		let messageId = this.activeAssistantMessageIds.get(agentId);
+		if (!messageId) {
+			messageId = randomUUID();
+			this.activeAssistantMessageIds.set(agentId, messageId);
+		}
+
+		const existing = list.find((message) => message.id === messageId);
+		const extractedText =
+			partialMessage && typeof partialMessage === "object"
+				? this.extractText((partialMessage as any).content)
+				: "";
+		const extractedThinking =
+			partialMessage && typeof partialMessage === "object"
+				? this.extractThinking((partialMessage as any).content)
+				: "";
+		const pendingThinking = this.streamingThinking.get(agentId);
+		const nextThinking = this.stripAnsi(extractedThinking || pendingThinking || "");
+
+		if (existing) {
+			existing.text = extractedText || `${existing.text}${fallbackDelta}`;
+			if (nextThinking) existing.thinking = nextThinking;
+			existing.timestamp = Date.now();
 		} else {
-			// 创建新 assistant 消息时，如果有待附加的思考内容，一并写入
-			const pendingThinking = this.streamingThinking.get(agentId);
-			const newMsg: ChatMessage = {
-				id: randomUUID(),
+			const text = extractedText || fallbackDelta;
+			if (!text) return;
+			list.push({
+				id: messageId,
 				agentId,
 				role: "assistant",
-				text: delta,
+				text,
 				timestamp: Date.now(),
-			};
-			if (pendingThinking) {
-				newMsg.thinking = this.stripAnsi(pendingThinking);
-				this.streamingThinking.delete(agentId);
-				this.emitThinking(agentId, "");
-			}
-			list.push(newMsg);
+				...(nextThinking ? { thinking: nextThinking } : {}),
+			});
+		}
+
+		if (nextThinking && (extractedText || fallbackDelta)) {
+			this.streamingThinking.delete(agentId);
+			this.emitThinking(agentId, "");
+		}
+
+		this.messages.set(agentId, list);
+		this.emit(ipcChannels.agentsMessage, { agentId, messages: list });
+	}
+
+	private upsertToolMessage(
+		agentId: string,
+		event: Record<string, any>,
+		status: "running" | "done" | "error",
+	) {
+		const toolName = event.toolName || "tool";
+		const toolCallId = String(event.toolCallId ?? `${toolName}-${Date.now()}`);
+		let agentTools = this.toolMessageIds.get(agentId);
+		if (!agentTools) {
+			agentTools = new Map<string, string>();
+			this.toolMessageIds.set(agentId, agentTools);
+		}
+
+		let messageId = agentTools.get(toolCallId);
+		if (!messageId) {
+			messageId = randomUUID();
+			agentTools.set(toolCallId, messageId);
+		}
+
+		const list = this.messages.get(agentId) ?? [];
+		const existing = list.find((message) => message.id === messageId);
+		const isError = status === "error" || event.isError === true;
+		const args = event.args ?? existing?.meta?.args;
+		const result =
+			event.result ??
+			event.partialResult ??
+			event.output ??
+			existing?.meta?.result;
+		const detailText = this.formatToolDetail(
+			toolName,
+			args,
+			result,
+			isError,
+		);
+		const icon = status === "running" ? "▶" : isError ? "✗" : "✓";
+		const text =
+			status === "running" ? `${icon} ${toolName}` : `${icon} ${toolName}`;
+		const meta = {
+			status,
+			toolName,
+			toolCallId,
+			args,
+			result,
+			isError,
+			detailText,
+		};
+
+		if (existing) {
+			existing.text = text;
+			existing.timestamp = Date.now();
+			existing.meta = meta;
+		} else {
+			list.push({
+				id: messageId,
+				agentId,
+				role: "tool",
+				text,
+				timestamp: Date.now(),
+				meta,
+			});
 		}
 
 		this.messages.set(agentId, list);
