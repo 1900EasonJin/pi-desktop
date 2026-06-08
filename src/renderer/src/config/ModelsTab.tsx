@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import type { ModelItem, ModelsFile } from "./configTypes";
 import { ApiTypeInput, SecretInput } from "./ConfigShared";
@@ -8,6 +8,75 @@ import {
 	getHeaderValue,
 	setHeaderValue,
 } from "./providerHeaders";
+
+type FetchedModel = { id: string; name?: string };
+
+function FetchedModelCombobox(props: {
+	models: FetchedModel[];
+	value: string;
+	onChange: (value: string) => void;
+}) {
+	const [open, setOpen] = useState(true);
+	const inputRef = useRef<HTMLInputElement | null>(null);
+	const selected = props.models.find((model) => model.id === props.value);
+	const displayValue = selected
+		? selected.name && selected.name !== selected.id
+			? `${selected.name} / ${selected.id}`
+			: selected.id
+		: "";
+
+	useEffect(() => {
+		inputRef.current?.focus();
+	}, []);
+
+	return (
+		<div
+			className="config-combobox config-model-combobox"
+			onBlur={() => {
+				// 让菜单项的 mouseDown 先完成选中，再关闭弹层，保持和 API 类型下拉一致。
+				window.setTimeout(() => setOpen(false), 80);
+			}}
+		>
+			<input
+				ref={inputRef}
+				readOnly
+				value={displayValue}
+				onFocus={() => setOpen(true)}
+				placeholder="选择模型"
+			/>
+			<button
+				type="button"
+				className="config-combobox-toggle"
+				onMouseDown={(e) => {
+					e.preventDefault();
+					setOpen((current) => !current);
+				}}
+				title="展开模型选项"
+			>
+				<ChevronDown size={14} />
+			</button>
+			{open && (
+				<div className="config-combobox-menu config-model-combobox-menu">
+					{props.models.map((model) => (
+						<button
+							key={model.id}
+							type="button"
+							className={model.id === props.value ? "active" : ""}
+							onMouseDown={(e) => {
+								e.preventDefault();
+								props.onChange(model.id);
+								setOpen(false);
+							}}
+						>
+							<span>{model.name ?? model.id}</span>
+							{model.name && model.name !== model.id && <small>{model.id}</small>}
+						</button>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
 
 export function ModelsTab(props: {
 	data: ModelsFile;
@@ -62,6 +131,23 @@ export function ModelsTab(props: {
 	// 当前正在下拉选模型的 provider（null = 手动输入模式）
 	const [addingModelDropdown, setAddingModelDropdown] = useState<string | null>(null);
 	const [addingModelId, setAddingModelId] = useState("");
+	const [pendingModelFocusKey, setPendingModelFocusKey] = useState<string | null>(null);
+	const modelIdInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+	const getModelInputKey = (providerName: string, index: number) =>
+		`${providerName}\u0000${index}`;
+
+	useLayoutEffect(() => {
+		if (!pendingModelFocusKey) return;
+		const frameId = window.requestAnimationFrame(() => {
+			const input = modelIdInputRefs.current[pendingModelFocusKey];
+			if (!input) return;
+			// 手动新增模型后立即进入 ID 编辑，避免点击“+ 手动添加”后还要再次点击空输入框。
+			input.focus();
+			input.select();
+			setPendingModelFocusKey(null);
+		});
+		return () => window.cancelAnimationFrame(frameId);
+	}, [data.providers, pendingModelFocusKey]);
 
 	return (
 		<div className="config-model-tab">
@@ -484,6 +570,9 @@ export function ModelsTab(props: {
 													className="config-btn small"
 													onClick={() => {
 														setAddingModelDropdown(null);
+														setPendingModelFocusKey(
+															getModelInputKey(name, provider.models.length),
+														);
 														props.onAddModel(name);
 													}}
 												>
@@ -496,21 +585,11 @@ export function ModelsTab(props: {
 										{addingModelDropdown === name &&
 											props.fetchedModels[name] && (
 												<div className="config-model-dropdown-row">
-													<select
+													<FetchedModelCombobox
+														models={props.fetchedModels[name]}
 														value={addingModelId}
-														onChange={(e) =>
-															setAddingModelId(e.target.value)
-														}
-													>
-														<option value="">
-															-- 选择模型 --
-														</option>
-														{props.fetchedModels[name].map((m) => (
-															<option key={m.id} value={m.id}>
-																{m.name ?? m.id}
-															</option>
-														))}
-													</select>
+														onChange={setAddingModelId}
+													/>
 													<button
 														className="config-btn primary small"
 														onClick={() => {
@@ -561,10 +640,15 @@ export function ModelsTab(props: {
 										</div>
 										{provider.models.map((m, i) => (
 											<div
-												key={`${m.id}-${i}`}
+												// 模型 ID 是可编辑字段，不能作为 key；否则每次输入都会重建行并导致输入框失焦。
+												key={`${name}-${i}`}
 												className="config-models-grid-row"
 											>
 												<input
+													ref={(element) => {
+														modelIdInputRefs.current[getModelInputKey(name, i)] =
+															element;
+													}}
 													value={m.id}
 													onChange={(e) =>
 														props.onUpdateModel(name, i, "id", e.target.value)
@@ -592,7 +676,7 @@ export function ModelsTab(props: {
 														)
 													}
 													// 数字输入框不能填写 200k 这类缩写，placeholder 使用真实可保存的 token 数值。
-											placeholder="1000000"
+													placeholder="1000000"
 												/>
 												<input
 													type="number"
@@ -608,7 +692,7 @@ export function ModelsTab(props: {
 														)
 													}
 													// 与 contextWindow 一样保持纯数字，避免提示值看起来能输入但实际被 number 控件拒绝。
-											placeholder="128000"
+													placeholder="128000"
 												/>
 												<label className="config-checkbox-cell">
 													<input
