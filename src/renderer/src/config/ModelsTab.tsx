@@ -478,6 +478,12 @@ export function ModelsTab(props: {
 														</div>
 													) : (
 														<div className="config-test-result-body">
+															{/* 失败原因放在详情第一行，保证用户从折叠卡片展开后立刻看到核心错误，
+															   不会只看到请求/Body 等排障信息而误判测试结果。 */}
+															<div className="config-test-result-row config-test-result-error-row">
+																<span>原因</span>
+																<strong>{props.testResult.error}</strong>
+															</div>
 															{props.testResult.latencyMs != null && (
 																<div className="config-test-result-row">
 																	<span>耗时</span>
@@ -505,9 +511,6 @@ export function ModelsTab(props: {
 																	</code>
 																</div>
 															)}
-															<div className="config-test-result-error">
-																{props.testResult.error}
-															</div>
 														</div>
 													)}
 												</div>

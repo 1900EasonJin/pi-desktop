@@ -4565,8 +4565,11 @@ body.is-composer-resizing .composer-resize-handle::after {
 	word-break: break-all;
 }
 
-.config-test-result-error {
-	font-size: 13px;
+.config-test-result-error-row {
+	align-items: flex-start;
+}
+
+.config-test-result-error-row strong {
 	color: #b42323;
 	line-height: 1.5;
 	word-break: break-all;

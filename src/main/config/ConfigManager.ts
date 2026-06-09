@@ -9,6 +9,11 @@ const PI_AGENT_DIR = join(homedir(), ".pi", "agent");
 // ── models.json 结构 ──────────────────────────────────
 // { providers: { [providerName]: { baseUrl, api, apiKey, models: [...] } } }
 
+// Provider 连接测试面对的是第三方网关和 reasoning 模型，首包可能慢于普通模型；
+// 放宽超时并在错误文案中说明“超时不等于兼容模式不支持”，避免误导用户改错配置。
+const PROVIDER_TEST_TIMEOUT_MS = 45_000;
+const PROVIDER_TEST_TIMEOUT_SECONDS = PROVIDER_TEST_TIMEOUT_MS / 1000;
+
 export type PiModelItem = {
 	id: string;
 	name?: string;
@@ -349,20 +354,10 @@ export class ConfigManager {
 					}),
 					body: JSON.stringify({
 						model: modelId,
-						input: "Use the list_files tool if tool calling is available.",
-						max_output_tokens: 10,
-						tools: [
-							{
-								type: "function",
-								name: "list_files",
-								description: "List files to verify tool calling compatibility.",
-								parameters: {
-									type: "object",
-									properties: {},
-									additionalProperties: false,
-								},
-							},
-						],
+						// 连接测试只验证接口是否可调用，不测试推理或工具能力；极短输入能减少
+						// reasoning 模型的思考时间，避免把慢响应误判为兼容模式不可用。
+						input: "Hi",
+						max_output_tokens: 1,
 					}),
 				};
 
@@ -378,7 +373,7 @@ export class ConfigManager {
 					body: JSON.stringify({
 						model: modelId,
 						messages: [{ role: "user", content: "Hi" }],
-						max_tokens: 10,
+						max_tokens: 1,
 					}),
 				};
 
@@ -397,7 +392,7 @@ export class ConfigManager {
 								parts: [{ text: "Hi" }],
 							},
 						],
-						generationConfig: { maxOutputTokens: 10 },
+						generationConfig: { maxOutputTokens: 1 },
 					}),
 				};
 
@@ -427,8 +422,10 @@ export class ConfigManager {
 					},
 					body: JSON.stringify({
 						model: modelId,
+						// Chat Completions 兼容网关常接入 reasoning 模型，测试时只要拿到
+						// 一个最小响应即可，不要求完整回答，降低超时和 token 消耗。
 						messages: [{ role: "user", content: "Hi" }],
-						max_tokens: 10,
+						max_tokens: 1,
 					}),
 				};
 		}
@@ -650,7 +647,7 @@ export class ConfigManager {
 
 		try {
 			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 15_000);
+			const timeout = setTimeout(() => controller.abort(), PROVIDER_TEST_TIMEOUT_MS);
 
 			let res: Awaited<ReturnType<typeof net.fetch>>;
 			try {
@@ -702,7 +699,7 @@ export class ConfigManager {
 			const msg =
 				e instanceof Error
 					? e.name === "AbortError"
-					? "请求超时（15 秒），请检查网络或 baseUrl"
+					? `请求超时（${PROVIDER_TEST_TIMEOUT_SECONDS} 秒）。这不一定代表兼容模式不支持或配置错误，可能是模型首包较慢、上游排队、代理/网络波动，或 reasoning 模型仍在内部思考。请稍后重试，或换用更轻量模型测试；如果模型列表可正常拉取，也可以保存配置后直接启动会话验证。`
 					: e.message
 					: String(e);
 			return {
