@@ -2677,11 +2677,11 @@ export function SettingsModal(props: {
 								<div className="web-endpoint-panel">
 									<div className="web-endpoint-grid">
 										<div className="web-endpoint-metric">
-											<span>HOST</span>
+											<span>{t("common.host")}</span>
 											<code>{props.settings.webServiceHost}</code>
 										</div>
 										<label className="web-endpoint-metric editable">
-											<span>PORT</span>
+											<span>{t("common.port")}</span>
 											<input
 												type="number"
 												min={1}
