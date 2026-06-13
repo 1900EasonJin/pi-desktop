@@ -87,7 +87,7 @@ const zhCN = {
 	"app.renameSessionTitle": "重命名会话",
 	"app.emptyHasProject": "创建 agent 后即可开始对话。",
 	"app.emptyNoProject": "先从左侧添加项目目录。",
-	"app.resend": "重新发送",
+	"app.resend": "重发",
 	"app.resendTitle": "用同一条用户消息再次发送给 AI",
 	"app.resizeComposer": "拖动调整输入框高度",
 	"app.restartTitle": "重启 Agent 进程，重新加载配置文件（provider、API key 等）",
