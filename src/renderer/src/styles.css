@@ -1068,7 +1068,7 @@ body:not(.is-list-resizing) .list-collapsed .chat-list-pane:hover .list-collapse
 	display: grid;
 	place-items: center;
 	border-radius: 999px;
-	color: #777;
+	color: var(--color-text-tertiary);
 	margin-right: 0;
 	line-height: 1;
 }
@@ -1077,8 +1077,8 @@ body:not(.is-list-resizing) .list-collapsed .chat-list-pane:hover .list-collapse
 	opacity: 1;
 }
 .conversation-close:hover {
-	background: #cbd0d8;
-	color: #111;
+	background: var(--color-bg-hover);
+	color: var(--color-text-primary);
 }
 
 .splitter {
@@ -1101,7 +1101,7 @@ body:not(.is-list-resizing) .list-collapsed .chat-list-pane:hover .list-collapse
 	bottom: 0;
 	left: 2px;
 	width: 1px;
-	background: #d4d9e1;
+	background: var(--color-border-strong);
 }
 .splitter::after {
 	content: "";
@@ -1114,7 +1114,7 @@ body:not(.is-list-resizing) .list-collapsed .chat-list-pane:hover .list-collapse
 .splitter:hover::before,
 body.is-resizing .splitter::before {
 	width: 2px;
-	background: #9fb4d8;
+	background: color-mix(in srgb, var(--color-accent) 32%, var(--color-border-strong));
 }
 body.is-resizing {
 	cursor: col-resize;
