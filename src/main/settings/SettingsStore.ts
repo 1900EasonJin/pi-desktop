@@ -64,9 +64,14 @@ export class SettingsStore {
 
   createWindowOptions() {
     const useNative = this.settings.useNativeTitleBar;
+    const isMac = process.platform === "darwin";
     return {
       frame: useNative,
-      titleBarStyle: useNative ? "default" as const : "hidden" as const,
+      titleBarStyle: useNative
+        ? "default" as const
+        : isMac
+          ? "hiddenInset" as const
+          : "hidden" as const,
       trafficLightPosition: { x: 14, y: 14 },
     };
   }

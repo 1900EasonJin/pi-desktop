@@ -1,4 +1,4 @@
-# pi-desktop
+# PiDeck
 
 [中文文档](README.md) · [English](README.en.md) · [LinuxDO 友链](https://linux.do)
 
@@ -10,7 +10,7 @@
 ![React](https://img.shields.io/badge/React-19-61dafb)
 ![Version](https://img.shields.io/badge/version-0.4.17-green)
 
-`pi-desktop` is **not** a fork of pi. It is a lightweight Electron shell that orchestrates multiple `pi --mode rpc` processes, providing a native desktop UI for projects, sessions, conversations, configuration, and tool orchestration — all powered by pi's native agent capabilities.
+`PiDeck` is **not** a fork of pi. It is a lightweight Electron shell that orchestrates multiple `pi --mode rpc` processes, providing a native desktop UI for projects, sessions, conversations, configuration, and tool orchestration — all powered by pi's native agent capabilities.
 
 ---
 
@@ -78,7 +78,7 @@ Project file tree with Git status indicators, `@` file reference suggestions in 
 ## Architecture
 
 ```txt
-pi-desktop
+PiDeck
 ├─ Electron Main Process
 │  ├─ Project record management
 │  ├─ Spawns pi --mode rpc processes
@@ -132,7 +132,7 @@ Prebuilt packages for **Windows**, **macOS**, and **Linux** are published from t
 
 👉 **[GitHub Releases](https://github.com/ayuayue/pi-desktop/releases)**
 
-> pi-desktop requires the `pi` CLI to be installed separately and available in your system `PATH`.
+> PiDeck requires the `pi` CLI to be installed separately and available in your system `PATH`.
 
 ---
 

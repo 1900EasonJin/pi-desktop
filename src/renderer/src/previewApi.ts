@@ -243,6 +243,11 @@ export function createPreviewApi(): PiDesktopApi {
 				},
 			}),
 			openExternal: async () => undefined,
+			restart: async () => undefined,
+			minimizeWindow: async () => undefined,
+			toggleMaximizeWindow: async () => undefined,
+			toggleAlwaysOnTopWindow: async () => false,
+			closeWindow: async () => undefined,
 			toggleDevTools: async () => false,
 		},
 		skills: {

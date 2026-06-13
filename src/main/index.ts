@@ -185,7 +185,7 @@ function setupTray() {
 	// iconPath 由 electron-vite 的 ?asset 后缀自动解析，打包后也能正确定位
 	const icon = nativeImage.createFromPath(iconPath);
 	tray = new Tray(icon.resize({ width: 16, height: 16 }));
-	tray.setToolTip("pi desktop");
+	tray.setToolTip("PiDeck");
 
 	// 双击托盘图标恢复窗口（Windows 常见交互）
 	tray.on("double-click", () => {
@@ -205,7 +205,7 @@ function setupTray() {
 		},
 		{ type: "separator" },
 		{
-			label: "退出 pi desktop",
+			label: "退出 PiDeck",
 			click: () => {
 				isQuitting = true;
 				app.quit();
@@ -391,6 +391,31 @@ function registerIpc() {
 	ipcMain.handle(ipcChannels.appOpenExternal, async (_event, url: string) => {
 		// 外部链接统一经主进程打开，避免 renderer 直接依赖 shell 权限，也便于后续做白名单校验。
 		await shell.openExternal(url);
+	});
+	ipcMain.handle(ipcChannels.appRestart, () => {
+		isQuitting = true;
+		app.relaunch();
+		app.quit();
+	});
+	ipcMain.handle(ipcChannels.appWindowMinimize, () => {
+		if (!mainWindow || mainWindow.isDestroyed()) return;
+		mainWindow.minimize();
+	});
+	ipcMain.handle(ipcChannels.appWindowToggleMaximize, () => {
+		if (!mainWindow || mainWindow.isDestroyed()) return;
+		if (mainWindow.isMaximized()) mainWindow.unmaximize();
+		else mainWindow.maximize();
+	});
+	ipcMain.handle(ipcChannels.appWindowToggleAlwaysOnTop, () => {
+		if (!mainWindow || mainWindow.isDestroyed()) return false;
+		const next = !mainWindow.isAlwaysOnTop();
+		// floating 适合工具型桌面窗口；跨平台由 Electron 映射到各系统的置顶层级。
+		mainWindow.setAlwaysOnTop(next, "floating");
+		return next;
+	});
+	ipcMain.handle(ipcChannels.appWindowClose, () => {
+		if (!mainWindow || mainWindow.isDestroyed()) return;
+		mainWindow.close();
 	});
 
 	ipcMain.handle(ipcChannels.settingsGet, () => settingsStore.get());

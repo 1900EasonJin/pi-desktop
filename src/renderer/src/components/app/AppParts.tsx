@@ -517,7 +517,7 @@ export function BranchSelector(props: {
 
 export function LogoMark() {
 	return (
-		<div className="logo-mark" aria-label="pi desktop logo">
+		<div className="logo-mark" aria-label="PiDeck logo">
 			<svg viewBox="140 140 520 520" width="22" height="22" aria-hidden="true">
 				<path
 					fill="#fff"
@@ -2347,6 +2347,7 @@ export function SettingsModal(props: {
 	onTestPiProxy: () => void;
 	onCheckUpdate: () => void;
 	onToggleDevTools: () => void;
+	onRestartApp: () => void;
 	onOpenWebService: (port: string) => void;
 	onClose: () => void;
 	onChange: (patch: Partial<AppSettings>) => void;
@@ -2806,6 +2807,15 @@ export function SettingsModal(props: {
 									</div>
 								</SettingsSection>
 								<SettingsSection title={t("settings.debug")}>
+									<div className="setting-row">
+										<div>
+											<strong>{t("settings.restartApp")}</strong>
+											<small>{t("settings.restartAppDesc")}</small>
+										</div>
+										<button onClick={props.onRestartApp}>
+											{t("settings.restartAppButton")}
+										</button>
+									</div>
 									<div className="setting-row">
 										<div>
 											<strong>{t("settings.devTools")}</strong>

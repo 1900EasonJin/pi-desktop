@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing to pi-desktop.
+Thanks for your interest in contributing to PiDeck.
 
 ## Development Setup
 

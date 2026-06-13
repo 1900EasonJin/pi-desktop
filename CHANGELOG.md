@@ -2,7 +2,7 @@
 
 [中文](CHANGELOG.zh-CN.md)
 
-All notable changes to pi-desktop are documented here.
+All notable changes to PiDeck are documented here.
 
 ## v0.4.17 - 2026-06-11
 
@@ -70,7 +70,7 @@ All notable changes to pi-desktop are documented here.
 ### Added
 - Project history quick action: each project row now includes a dedicated history button, so historical sessions can be opened without relying on the context menu.
 - Per-answer file-change summary: each completed agent answer now shows a compact list of modified file names and changed line counts directly below that answer, while the Files panel keeps the session-wide overview.
-- In-app update check: pi-desktop now periodically checks the latest GitHub Release and shows release notes plus browser download links when a newer version is available.
+- In-app update check: PiDeck now periodically checks the latest GitHub Release and shows release notes plus browser download links when a newer version is available.
 - Update failure guidance: manual update checks now explain GitHub connectivity issues, suggest configuring the desktop proxy, and provide a direct Release-page fallback.
 
 ### Fixed
@@ -418,7 +418,7 @@ All notable changes to pi-desktop are documented here.
 ## v0.1.0 - 2026-05-31
 
 ### Added
-- Initial pi-desktop workbench.
+- Initial PiDeck workbench.
 - Multi-project desktop workspace for managing local folders.
 - Multiple pi RPC agents running side by side.
 - Session history drawer and historical session restore.

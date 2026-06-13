@@ -130,6 +130,17 @@ const api = {
 			) as Promise<FeedbackEnvironment>,
 		openExternal: (url: string) =>
 			ipcRenderer.invoke(ipcChannels.appOpenExternal, url) as Promise<void>,
+		restart: () => ipcRenderer.invoke(ipcChannels.appRestart) as Promise<void>,
+		minimizeWindow: () =>
+			ipcRenderer.invoke(ipcChannels.appWindowMinimize) as Promise<void>,
+		toggleMaximizeWindow: () =>
+			ipcRenderer.invoke(ipcChannels.appWindowToggleMaximize) as Promise<void>,
+		toggleAlwaysOnTopWindow: () =>
+			ipcRenderer.invoke(
+				ipcChannels.appWindowToggleAlwaysOnTop,
+			) as Promise<boolean>,
+		closeWindow: () =>
+			ipcRenderer.invoke(ipcChannels.appWindowClose) as Promise<void>,
 		toggleDevTools: () =>
 			ipcRenderer.invoke(ipcChannels.appToggleDevTools) as Promise<boolean>,
 	},

@@ -19,6 +19,9 @@ import {
   Play,
   Plus,
   Trash2,
+  Minus,
+  Pin,
+  Square,
   X,
 } from "lucide-react";
 import { createPreviewApi } from "./previewApi";
@@ -326,6 +329,7 @@ export function App() {
   const [updateChecking, setUpdateChecking] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [windowAlwaysOnTop, setWindowAlwaysOnTop] = useState(false);
   const [_debugOpen, _setDebugOpen] = useState(false);
   /** RPC 日志弹窗目标 agent */
   const [rpcLogAgentId, setRpcLogAgentId] = useState<string | null>(null);
@@ -2365,6 +2369,7 @@ export function App() {
         drawer ? "drawer-open" : "",
         listCollapsed ? "list-collapsed" : "",
         drawerCollapsed ? "drawer-collapsed" : "",
+        settings.useNativeTitleBar ? "" : "custom-titlebar-enabled",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -2377,11 +2382,55 @@ export function App() {
         } as React.CSSProperties
       }
     >
+      {!settings.useNativeTitleBar && <div className="window-drag-layer" aria-hidden="true" />}
+      {!settings.useNativeTitleBar && (
+        <div className="window-controls" aria-label="PiDeck window controls">
+          <button
+            type="button"
+            className={`window-control pin${windowAlwaysOnTop ? " active" : ""}`}
+            aria-label={windowAlwaysOnTop ? "Unpin window from top" : "Keep window on top"}
+            title={windowAlwaysOnTop ? "取消置顶" : "窗口置顶"}
+            onClick={async () => {
+              const next = await api.app.toggleAlwaysOnTopWindow();
+              setWindowAlwaysOnTop(next);
+            }}
+          >
+            <Pin size={15} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-control"
+            aria-label="Minimize window"
+            onClick={() => api.app.minimizeWindow()}
+          >
+            <Minus size={15} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-control"
+            aria-label="Maximize or restore window"
+            onClick={() => api.app.toggleMaximizeWindow()}
+          >
+            <Square size={13} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="window-control close"
+            aria-label="Close window"
+            onClick={() => api.app.closeWindow()}
+          >
+            <X size={16} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <aside className="chat-list-pane">
         <div className="list-toolbar">
           <div className="app-badge">
             <LogoMark />
-            <span>Pi-π</span>
+            <span className="brand-wordmark" aria-label="PiDeck">
+              <span className="brand-wordmark-pi">Pi</span>
+              <span className="brand-wordmark-deck">Deck</span>
+            </span>
           </div>
         </div>
         <button
@@ -2707,13 +2756,13 @@ export function App() {
         <header ref={chatHeaderRef} className="chat-header">
           <div className="chat-title-block">
             <strong
-              title={activeAgent?.title ?? activeProject?.name ?? "pi desktop"}
+              title={activeAgent?.title ?? activeProject?.name ?? "PiDeck"}
             >
               {activeAgent?.title ??
                 (isChatProject(activeProject)
                   ? t("app.chatProject")
                   : activeProject?.name) ??
-                "pi desktop"}
+                "PiDeck"}
             </strong>
             <span
               title={
@@ -3374,6 +3423,7 @@ export function App() {
               opened ? t("app.devToolsOpened") : t("app.devToolsClosed"),
             );
           }}
+          onRestartApp={() => api.app.restart()}
           onOpenWebService={(port) =>
             api.app.openExternal(`http://127.0.0.1:${port}`)
           }

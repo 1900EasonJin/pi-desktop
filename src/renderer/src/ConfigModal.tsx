@@ -570,7 +570,7 @@ function ConfigModalContent(props: ConfigModalProps) {
 			const a = document.createElement("a");
 			a.href = url;
 			// 文件名含时间戳，便于用户区分多次备份
-			a.download = `pi-desktop-config-${new Date().toISOString().slice(0, 10)}.json`;
+			a.download = `pideck-config-${new Date().toISOString().slice(0, 10)}.json`;
 			a.click();
 			URL.revokeObjectURL(url);
 			showToast(t("config.exported"));
