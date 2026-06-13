@@ -27,6 +27,7 @@ import {
 	X,
 } from "lucide-react";
 import { t, type TranslationKey } from "../../i18n";
+import { SelectField } from "../ui/SelectField";
 import type {
 	AgentRuntimeState,
 	AgentTab,
@@ -2405,6 +2406,22 @@ export function SettingsModal(props: {
 			icon: <Wrench size={16} />,
 		},
 	];
+	const themeOptions = [
+		{ value: "system", label: t("settings.themeSystem") },
+		{ value: "light", label: t("settings.themeLight") },
+		{ value: "dark", label: t("settings.themeDark") },
+	];
+	const languageOptions = [
+		{ value: "system", label: t("settings.languageSystem") },
+		{ value: "zh-CN", label: t("settings.languageZh") },
+		{ value: "en-US", label: t("settings.languageEn") },
+		{ value: "pseudo", label: t("settings.languagePseudo") },
+	];
+	const sendShortcutOptions = [
+		{ value: "enter-send", label: t("settings.sendShortcut.enter") },
+		{ value: "ctrl-enter-send", label: t("settings.sendShortcut.ctrl") },
+		{ value: "shift-enter-send", label: t("settings.sendShortcut.shift") },
+	];
 
 	return (
 		<div className="modal-backdrop">
@@ -2435,49 +2452,28 @@ export function SettingsModal(props: {
 						{activeTab === "base" && (
 							<>
 								<SettingsSection title={t("settings.interface")}>
-									<div className="setting-field">
-										<span>{t("settings.theme")}</span>
-										<select
-											value={props.settings.theme}
-											onChange={(event) =>
-												props.onChange({
-													theme: event.target
-														.value as AppSettings["theme"],
-												})
-											}
-										>
-											<option value="system">
-												{t("settings.themeSystem")}
-											</option>
-											<option value="light">{t("settings.themeLight")}</option>
-											<option value="dark">{t("settings.themeDark")}</option>
-										</select>
-									</div>
-									<div className="setting-field">
-										<span>{t("settings.language")}</span>
-										<select
-											value={props.settings.language}
-											onChange={(event) =>
-												props.onChange({
-													language: event.target
-														.value as AppSettings["language"],
-												})
-											}
-										>
-											<option value="system">
-												{t("settings.languageSystem")}
-											</option>
-											<option value="zh-CN">
-												{t("settings.languageZh")}
-											</option>
-											<option value="en-US">
-												{t("settings.languageEn")}
-											</option>
-											<option value="pseudo">
-												{t("settings.languagePseudo")}
-											</option>
-										</select>
-									</div>
+									<SelectField
+										className="setting-field"
+										label={t("settings.theme")}
+										value={props.settings.theme}
+										options={themeOptions}
+										onChange={(value) =>
+											props.onChange({
+												theme: value as AppSettings["theme"],
+											})
+										}
+									/>
+									<SelectField
+										className="setting-field"
+										label={t("settings.language")}
+										value={props.settings.language}
+										options={languageOptions}
+										onChange={(value) =>
+											props.onChange({
+												language: value as AppSettings["language"],
+											})
+										}
+									/>
 									<SettingSwitch
 										title={t("settings.nativeTitleBar")}
 										checked={props.settings.useNativeTitleBar}
@@ -2516,28 +2512,18 @@ export function SettingsModal(props: {
 											props.onChange({ showThinking: checked })
 										}
 									/>
-									<div className="setting-field">
-										<span>{t("settings.inputShortcut")}</span>
-										<select
-											value={props.settings.sendShortcut}
-											onChange={(event) =>
-												props.onChange({
-													sendShortcut: event.target
-														.value as AppSettings["sendShortcut"],
-												})
-											}
-										>
-											<option value="enter-send">
-												{t("settings.sendShortcut.enter")}
-											</option>
-											<option value="ctrl-enter-send">
-												{t("settings.sendShortcut.ctrl")}
-											</option>
-											<option value="shift-enter-send">
-												{t("settings.sendShortcut.shift")}
-											</option>
-										</select>
-									</div>
+									<SelectField
+										className="setting-field"
+										label={t("settings.inputShortcut")}
+										value={props.settings.sendShortcut}
+										options={sendShortcutOptions}
+										onChange={(value) =>
+											props.onChange({
+												sendShortcut:
+													value as AppSettings["sendShortcut"],
+											})
+										}
+									/>
 								</SettingsSection>
 								<SettingsSection title={t("settings.privacy")}>
 									<SettingSwitch
