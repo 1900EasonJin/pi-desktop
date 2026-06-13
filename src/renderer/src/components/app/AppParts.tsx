@@ -27,7 +27,7 @@ import {
 	X,
 } from "lucide-react";
 import { t, type TranslationKey } from "../../i18n";
-import { CloseIconButton } from "../ui/IconButton";
+import { CloseIconButton, IconButton } from "../ui/IconButton";
 import { SelectField } from "../ui/SelectField";
 import type {
 	AgentRuntimeState,
@@ -345,7 +345,13 @@ export function ModelPicker(props: {
 			>
 				<div className="picker-palette-header">
 					<span>{t("app.modelPickerTitle")}</span>
-					<button className="picker-palette-close" onClick={props.onClose}>×</button>
+					<IconButton
+						className="picker-palette-close"
+						label={t("common.close")}
+						onClick={props.onClose}
+					>
+						<X size={16} strokeWidth={2.2} aria-hidden="true" />
+					</IconButton>
 				</div>
 				<div className="picker-palette-search">
 					<input
@@ -407,7 +413,13 @@ export function ThinkingPicker(props: {
 			>
 				<div className="picker-palette-header">
 					<span>{t("app.thinkingPickerTitle")}</span>
-					<button className="picker-palette-close" onClick={props.onClose}>×</button>
+					<IconButton
+						className="picker-palette-close"
+						label={t("common.close")}
+						onClick={props.onClose}
+					>
+						<X size={16} strokeWidth={2.2} aria-hidden="true" />
+					</IconButton>
 				</div>
 				<div className="picker-palette-list">
 					{THINKING_LEVELS.map((level) => {
@@ -1965,7 +1977,13 @@ export function SessionHistoryModal(props: {
 						<strong>{t("drawer.historyTitle")}</strong>
 						<span>{props.project.name}</span>
 					</div>
-					<button className="command-palette-close" onClick={props.onClose}>×</button>
+					<IconButton
+						className="command-palette-close"
+						label={t("common.close")}
+						onClick={props.onClose}
+					>
+						<X size={16} strokeWidth={2.2} aria-hidden="true" />
+					</IconButton>
 				</div>
 				<div className="session-history-path" title={props.project.path}>
 					{props.project.path}
@@ -2179,9 +2197,13 @@ export function PromptSuggestions(props: {
 		<div className="command-palette">
 			<div className="command-palette-header">
 				<span>{tail.startsWith("/") ? t("prompt.commands") : t("prompt.files")}</span>
-				<button className="command-palette-close" onClick={props.onClose}>
-					×
-				</button>
+				<IconButton
+					className="command-palette-close"
+					label={t("common.close")}
+					onClick={props.onClose}
+				>
+					<X size={16} strokeWidth={2.2} aria-hidden="true" />
+				</IconButton>
 			</div>
 			<div className="command-palette-list" ref={listRef}>
 				{props.items.map((item, index) => (
