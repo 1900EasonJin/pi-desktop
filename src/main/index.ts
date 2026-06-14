@@ -189,7 +189,7 @@ function setupTray() {
 
 	// 双击托盘图标恢复窗口（Windows 常见交互）
 	tray.on("double-click", () => {
-		if (mainWindow) {
+		if (mainWindow && !mainWindow.isDestroyed()) {
 			mainWindow.show();
 			mainWindow.focus();
 		}
@@ -199,8 +199,10 @@ function setupTray() {
 		{
 			label: "显示窗口",
 			click: () => {
-				mainWindow?.show();
-				mainWindow?.focus();
+				if (mainWindow && !mainWindow.isDestroyed()) {
+					mainWindow.show();
+					mainWindow.focus();
+				}
 			},
 		},
 		{ type: "separator" },
@@ -258,6 +260,10 @@ function createWindow() {
 		if (!isQuitting && settingsStore.get().closeToTray) {
 			event.preventDefault();
 			mainWindow?.hide();
+		} else if (!isQuitting) {
+			// 如果没有启用托盘，关闭窗口时直接退出应用
+			isQuitting = true;
+			app.quit();
 		}
 	});
 
