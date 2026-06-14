@@ -1400,6 +1400,26 @@ body.is-terminal-resizing {
 	font-weight: 700;
 	color: var(--color-text-primary);
 }
+.chat-subtitle-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 3px;
+	min-width: 0;
+}
+.chat-subtitle-row .chat-path {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--color-text-tertiary);
+	font-size: var(--font-size-caption);
+	line-height: var(--line-height-caption);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex: 1;
+	min-width: 0;
+}
 .chat-header span {
 	display: block;
 	color: var(--color-text-tertiary);
@@ -4396,6 +4416,80 @@ body.is-composer-resizing .composer-resize-handle::after {
 	background: color-mix(in srgb, var(--color-info) 10%, var(--color-bg-panel));
 	font-weight: 500;
 }
+
+/* Agent 状态徽章 */
+.agent-status-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 8px;
+	border-radius: var(--radius-sm);
+	font-size: var(--font-size-caption);
+	font-weight: 500;
+	line-height: 1.4;
+}
+
+.agent-status-badge.status-running {
+	background: color-mix(in srgb, var(--color-success) 12%, transparent);
+	color: var(--color-success);
+}
+
+.agent-status-badge.status-idle {
+	background: color-mix(in srgb, var(--color-text-tertiary) 10%, transparent);
+	color: var(--color-text-secondary);
+}
+
+.agent-status-badge.status-starting {
+	background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+	color: var(--color-warning);
+	animation: pulse-badge 2s ease-in-out infinite;
+}
+
+@keyframes pulse-badge {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.6; }
+}
+
+/* 项目列表中的状态指示器 */
+.agent-status-indicator {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	margin-left: 6px;
+	font-size: 11px;
+	line-height: 1.2;
+	padding: 1px 6px;
+	border-radius: var(--radius-xs);
+	font-weight: 500;
+}
+
+.agent-status-indicator.status-running {
+	color: var(--color-success);
+	background: color-mix(in srgb, var(--color-success) 8%, transparent);
+	animation: pulse-indicator 2s ease-in-out infinite;
+}
+
+.agent-status-indicator.status-idle {
+	color: var(--color-text-tertiary);
+	background: color-mix(in srgb, var(--color-text-tertiary) 6%, transparent);
+}
+
+.agent-status-indicator.status-starting {
+	color: var(--color-warning);
+	background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+	animation: pulse-indicator 2s ease-in-out infinite;
+}
+
+@keyframes pulse-indicator {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.5; }
+}
+
+@keyframes spin-indicator {
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
+}
+
 .composer-toolbar {
 	display: flex;
 	gap: var(--space-2);

@@ -2823,35 +2823,47 @@ export function App() {
                   </span>
                 </button>
                 {!isCollapsed &&
-                  agentDisplay.visibleAgents.map((agent) => (
-                    <button
-                      key={agent.id}
-                      className={
-                        agent.id === activeAgentId
-                          ? "conversation agent-row active"
-                          : "conversation agent-row"
-                      }
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        setAgentMenu({
-                          x: event.clientX,
-                          y: event.clientY,
-                          agent,
-                        });
-                      }}
-                      onClick={() => {
-                        setActiveProjectId(project.id);
-                        setActiveAgentId(agent.id);
-                      }}
-                    >
-                      <span className="agent-node-marker" aria-hidden="true" />
-                      <div className="conversation-body">
-                        <div className="conversation-title">
-                          <strong>{agent.title}</strong>
+                  agentDisplay.visibleAgents.map((agent) => {
+                    const isActiveAgent = agent.id === activeAgentId;
+                    return (
+                      <button
+                        key={agent.id}
+                        className={
+                          isActiveAgent
+                            ? "conversation agent-row active"
+                            : "conversation agent-row"
+                        }
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          setAgentMenu({
+                            x: event.clientX,
+                            y: event.clientY,
+                            agent,
+                          });
+                        }}
+                        onClick={() => {
+                          setActiveProjectId(project.id);
+                          setActiveAgentId(agent.id);
+                        }}
+                      >
+                        <span className="agent-node-marker" aria-hidden="true" />
+                        <div className="conversation-body">
+                          <div className="conversation-title">
+                            <strong>{agent.title}</strong>
+                            {isActiveAgent && agent.status && (
+                              <span className={`agent-status-indicator status-${agent.status}`}>
+                                {agent.status === 'running' && '●'}
+                                {agent.status === 'idle' && '○'}
+                                {agent.status === 'starting' && '◐'}
+                                {' '}
+                                {t(`app.status${agent.status.charAt(0).toUpperCase() + agent.status.slice(1)}` as any) || agent.status}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    );
+                  })}
                 {!isCollapsed && agentDisplay.hasHiddenAgents && (
                   <button
                     className="agent-more-row"
@@ -2999,17 +3011,32 @@ export function App() {
                   : activeProject?.name) ??
                 "PiDeck"}
             </strong>
-            <span
-              title={
-                activeAgent
-                  ? `${activeAgent.status} · ${activeProject?.path ?? activeAgent.cwd}`
-                  : t("app.selectProject")
-              }
-            >
-              {activeAgent
-                ? `${activeAgent.status} · ${displayPath(activeProject?.path ?? activeAgent.cwd)}`
-                : t("app.selectProject")}
-            </span>
+            <div className="chat-subtitle-row">
+              <span
+                className="chat-path"
+                title={
+                  activeAgent
+                    ? `${activeAgent.status} · ${activeProject?.path ?? activeAgent.cwd}`
+                    : t("app.selectProject")
+                }
+              >
+                {activeAgent ? (
+                  <>
+                    <span className={`agent-status-badge status-${activeAgent.status}`}>
+                      {activeAgent.status === 'running' && '●'}
+                      {activeAgent.status === 'idle' && '○'}
+                      {activeAgent.status === 'starting' && '◐'}
+                      {' '}
+                      {t(`app.status${activeAgent.status.charAt(0).toUpperCase() + activeAgent.status.slice(1)}` as any) || activeAgent.status}
+                    </span>
+                    {' · '}
+                    {displayPath(activeProject?.path ?? activeAgent.cwd)}
+                  </>
+                ) : (
+                  t("app.selectProject")
+                )}
+              </span>
+            </div>
             <SessionStatus
               state={activeRuntimeState}
               duration={
