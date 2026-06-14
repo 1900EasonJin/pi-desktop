@@ -4,8 +4,11 @@ export function getUserAgentOptions() {
 	return [
 		{ value: "", label: t("config.userAgentRuntimeDefault") },
 		{ value: "OpenAI/JS 6.26.0", label: "OpenAI/JS 6.26.0" },
-		{ value: "Mozilla/5.0", label: "Mozilla/5.0" },
+		{ value: "anthropic-sdk-typescript/0.27.3", label: "Anthropic SDK (anthropic-sdk-typescript/0.27.3)" },
+		{ value: "Mozilla/5.0", label: "Mozilla/5.0 (浏览器)" },
 		{ value: "pi-coding-agent", label: "pi-coding-agent" },
+		{ value: "python-requests/2.31.0", label: "Python Requests" },
+		{ value: "axios/1.6.0", label: "Axios" },
 	];
 }
 export const CUSTOM_USER_AGENT_VALUE = "__custom__";

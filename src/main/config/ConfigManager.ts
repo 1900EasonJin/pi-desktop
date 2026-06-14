@@ -330,20 +330,20 @@ export class ConfigManager {
 		if (api === "anthropic-messages") {
 			return {
 				url: `${u}/models`,
-				headers: {
+				headers: this.withAnthropicSdkUserAgent({
 					"x-api-key": apiKey,
 					"anthropic-version": "2023-06-01",
 					"Content-Type": "application/json",
-				},
+				}),
 			};
 		}
 
 		return {
 			url: `${u}/models`,
-			headers: {
+			headers: this.withOpenAiSdkUserAgent({
 				Authorization: `Bearer ${apiKey}`,
 				"Content-Type": "application/json",
-			},
+			}),
 		};
 	}
 
@@ -414,12 +414,12 @@ export class ConfigManager {
 			case "anthropic-messages":
 				return {
 					url: `${u}/messages`,
-					headers: {
+					headers: this.withAnthropicSdkUserAgent({
 						"x-api-key": apiKey,
 						"anthropic-version": "2023-06-01",
 						"Content-Type": "application/json",
 						...extraHeaders,
-					},
+					}),
 					body: JSON.stringify({
 						model: modelId,
 						messages: [{ role: "user", content: "Hi" }],
@@ -543,6 +543,15 @@ export class ConfigManager {
 		// pi 的 openai-responses provider 走 OpenAI JS SDK。部分代理会按 SDK
 		// 默认 User-Agent 拦截请求，所以配置检测需要模拟该默认值，避免“检测通过、会话 403”。
 		return hasUserAgent ? headers : { ...headers, "User-Agent": "OpenAI/JS 6.26.0" };
+	}
+
+	private withAnthropicSdkUserAgent(headers: Record<string, string>) {
+		const hasUserAgent = Object.keys(headers).some(
+			(key) => key.toLowerCase() === "user-agent",
+		);
+		// pi 的 anthropic-messages provider 走 Anthropic SDK。部分服务会验证
+		// User-Agent 避免非官方客户端，所以需要模拟 SDK 的默认值。
+		return hasUserAgent ? headers : { ...headers, "User-Agent": "anthropic-sdk-typescript/0.27.3" };
 	}
 
 	private redactSecret(value: string, apiKey: string) {

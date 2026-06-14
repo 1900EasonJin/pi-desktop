@@ -2900,7 +2900,8 @@ body.is-composer-resizing .composer-resize-handle::after {
 	max-width: 100%;
 	min-width: 0;
 	height: 100%;
-	min-height: 90px;
+	/* 输入框最小高度增加，与 COMPOSER_MIN_HEIGHT 保持一致 */
+	min-height: 120px;
 	resize: none;
 	overflow-x: hidden;
 	overflow-y: auto;

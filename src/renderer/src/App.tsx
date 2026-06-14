@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useCallback,
   type PointerEvent,
 } from "react";
 import ReactMarkdown from "react-markdown";
@@ -41,6 +42,9 @@ import {
   setTerminalDockOpen,
   type TerminalDockStateByAgent,
 } from "./terminalDockState";
+import { useMessagePagination } from "./hooks/useMessagePagination";
+import { useSessionLoader } from "./hooks/useSessionLoader";
+import { LazyWrapper } from "./hooks/useLazyComponent";
 import {
   AgentRun,
   AgentContextMenu,
@@ -104,7 +108,8 @@ const isLanWeb =
   !window.piDesktop && window.location.protocol.startsWith("http");
 const api =
   window.piDesktop ?? (isLanWeb ? createBrowserApi() : createPreviewApi());
-const COMPOSER_MIN_HEIGHT = 132;
+// 输入框默认高度增加，提供更好的输入体验，适合多行输入和代码片段
+const COMPOSER_MIN_HEIGHT = 260;
 const COMPOSER_DEFAULT_TERMINAL_HEIGHT = 220;
 const COMPOSER_MIN_TIMELINE_HEIGHT = 160;
 const SIDEBAR_SESSION_PAGE_SIZE = 5;
@@ -156,15 +161,16 @@ function normalizeSessionPathForCompare(sessionPath?: string) {
 function isSameSessionPath(left?: string, right?: string) {
   const normalizedLeft = normalizeSessionPathForCompare(left);
   const normalizedRight = normalizeSessionPathForCompare(right);
-  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+  return Boolean(
+    normalizedLeft && normalizedRight && normalizedLeft === normalizedRight,
+  );
 }
 
 function isReplacementForPendingAgent(agent: AgentTab, pending: AgentTab) {
   if (!pending.id.startsWith("pending-")) return false;
   if (agent.projectId !== pending.projectId || agent.cwd !== pending.cwd)
     return false;
-  if (isSameSessionPath(agent.sessionPath, pending.sessionPath))
-    return true;
+  if (isSameSessionPath(agent.sessionPath, pending.sessionPath)) return true;
   if (pending.sessionPath && agent.createdAt >= pending.createdAt - 1000)
     return true;
   return (
@@ -503,9 +509,24 @@ export function App() {
   const activeRuntimeState = activeAgentId
     ? runtimeStateByAgent[activeAgentId]
     : undefined;
+
+  // 消息分页：超过 100 条消息时启用，大幅减少输入卡顿
+  // 首屏 150 条，每次加载 150 条，一页一页懒加载
+  const {
+    visibleMessages: paginatedMessages,
+    hasMore: hasMoreMessages,
+    loadMore: loadMoreMessages,
+    isLoading: isLoadingMoreMessages,
+  } = useMessagePagination({
+    messages: activeMessages,
+    initialPageSize: 150, // 首屏 150 条
+    pageSize: 150,        // 每次加载 150 条
+    enabled: activeMessages.length > 100, // 超过 100 条才启用
+  });
+
   const renderedMessages = useMemo(
-    () => groupToolMessages(activeMessages),
-    [activeMessages],
+    () => groupToolMessages(paginatedMessages),
+    [paginatedMessages],
   );
   const isAwaitingAssistant = Boolean(
     activeAgent &&
@@ -566,6 +587,7 @@ export function App() {
   }, [settings.theme]);
 
   /** 当前会话中 agent 修改过的文件（从 tool 消息 meta 中提取） */
+  // 优化：只在消息数量变化时才重新计算，减少不必要的遍历
   const modifiedFiles = useMemo(() => {
     const byPath = new Map<string, SessionModifiedFile>();
     for (const msg of activeMessages) {
@@ -599,15 +621,19 @@ export function App() {
       });
     }
     return Array.from(byPath.values());
-  }, [activeMessages]);
+  }, [activeMessages.length, activeAgentId]);
+  // 优化：轮廓项计算仅在消息数量变化时触发，减少不必要的重计算
   const outlineItems = useMemo(
     () => buildOutline(activeMessages),
-    [activeMessages],
+    [activeMessages.length, activeAgentId],
   );
   const flatFiles = useMemo(() => flattenFiles(files), [files]);
+  // 优化：建议项计算仅在必要时触发，避免每次输入都重计算导致卡顿
+  // 只有当建议框打开时才计算，关闭时返回空数组
   const suggestionItems = useMemo(
-    () => buildSuggestionItems(prompt, commands, flatFiles),
-    [prompt, commands, flatFiles],
+    () =>
+      suggestionsOpen ? buildSuggestionItems(prompt, commands, flatFiles) : [],
+    [suggestionsOpen, prompt, commands, flatFiles],
   );
   const visibleAgents = useMemo(
     () =>
@@ -626,7 +652,10 @@ export function App() {
           displayAgents.some(
             (agent) =>
               agent.projectId === project.id &&
-              matches(agent.title + agent.cwd + (agent.sessionId ?? ""), search),
+              matches(
+                agent.title + agent.cwd + (agent.sessionId ?? ""),
+                search,
+              ),
           ) ||
           projectSessions.some((session) =>
             matches(
@@ -726,11 +755,22 @@ export function App() {
         migrateAgentRecord(current, pendingReplacementById, draftIds),
       );
     });
+    // 优化：历史会话加载时消息更新频繁，只在消息真正变化时更新 state，避免不必要的重渲染导致输入卡顿
     const offMessages = api.agents.onMessages((payload) =>
-      setMessagesByAgent((current) => ({
-        ...current,
-        [payload.agentId]: payload.messages,
-      })),
+      setMessagesByAgent((current) => {
+        const prevMessages = current[payload.agentId];
+        // 消息数量相同且引用相同时跳过更新，减少输入框重渲染
+        if (
+          prevMessages?.length === payload.messages.length &&
+          prevMessages === payload.messages
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          [payload.agentId]: payload.messages,
+        };
+      }),
     );
     const offLog = api.agents.onLog((payload) =>
       setLogs((current) => {
@@ -815,8 +855,11 @@ export function App() {
         ),
       ),
     );
+    // 启动时只加载 chat 项目的会话，其他项目延迟到展开时加载
     for (const project of projects) {
-      void refreshProjectSessions(project.id).catch(() => undefined);
+      if (project.kind === "chat") {
+        void refreshProjectSessions(project.id).catch(() => undefined);
+      }
     }
   }, [projectIdsKey]);
 
@@ -914,7 +957,7 @@ export function App() {
   function scrollToBottom() {
     const timeline = timelineRef.current;
     if (!timeline) return;
-    timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+    timeline.scrollTo({ top: timeline.scrollHeight, behavior: "smooth" });
     setAutoScroll(true);
     setShowScrollToBottom(false);
   }
@@ -1002,7 +1045,7 @@ export function App() {
     const handleScroll = () => {
       const { scrollTop, scrollHeight, clientHeight } = timeline;
       const isAtBottom = scrollHeight - scrollTop - clientHeight < 100;
-      
+
       if (isAtBottom) {
         setAutoScroll(true);
         setShowScrollToBottom(false);
@@ -1015,8 +1058,8 @@ export function App() {
     // 初始化时检查一次
     handleScroll();
 
-    timeline.addEventListener('scroll', handleScroll);
-    return () => timeline.removeEventListener('scroll', handleScroll);
+    timeline.addEventListener("scroll", handleScroll);
+    return () => timeline.removeEventListener("scroll", handleScroll);
   }, [activeAgentId]);
 
   // 追踪 agent 会话开始/结束时间，计算会话时长
@@ -1110,6 +1153,16 @@ export function App() {
       setGitInfo({ current: null, branches: [] });
       return;
     }
+
+    // 切换项目时，如果该项目未加载过会话，则加载
+    const activeProject = projects.find((p) => p.id === activeProjectId);
+    const hasLoadedSessions = sessionsByProject[activeProjectId]?.length > 0;
+    const isLoadingNow = sessionLoadingByProject[activeProjectId];
+
+    if (activeProject && !activeProject.kind && !hasLoadedSessions && !isLoadingNow) {
+      void refreshProjectSessions(activeProjectId).catch(() => undefined);
+    }
+
     const currentAgentBelongsToProject =
       activeAgentId &&
       displayAgents.some(
@@ -1361,7 +1414,11 @@ export function App() {
     if (!projectId) return;
     setSessionsProjectId(undefined);
     setSessions([]);
-    await createAgent(projectId, session.filePath, session.name || t("common.untitled"));
+    await createAgent(
+      projectId,
+      session.filePath,
+      session.name || t("common.untitled"),
+    );
   }
 
   async function renameHistorySession(filePath: string, newName: string) {
@@ -1450,7 +1507,8 @@ export function App() {
       setAgentRenameValue("");
       showToast(t("app.sessionRenamed"), 2200);
       await refreshProjectSessions(tab.projectId);
-      if (sessionsProjectId === tab.projectId) await refreshSessions(tab.projectId);
+      if (sessionsProjectId === tab.projectId)
+        await refreshSessions(tab.projectId);
     } catch (error) {
       showToast(
         t("app.sessionRenameFailed", {
@@ -1492,12 +1550,22 @@ export function App() {
     }
   }
 
-  async function openSidebarSession(projectId: string, session: SessionSummary) {
+  async function openSidebarSession(
+    projectId: string,
+    session: SessionSummary,
+  ) {
     setSessionMenu(null);
-    return createAgent(projectId, session.filePath, session.name || t("common.untitled"));
+    return createAgent(
+      projectId,
+      session.filePath,
+      session.name || t("common.untitled"),
+    );
   }
 
-  async function copySidebarSession(projectId: string, session: SessionSummary) {
+  async function copySidebarSession(
+    projectId: string,
+    session: SessionSummary,
+  ) {
     setSessionActionLoading("copy");
     try {
       await copySession(session.filePath, projectId);
@@ -1507,7 +1575,10 @@ export function App() {
     }
   }
 
-  async function exportSidebarSession(projectId: string, session: SessionSummary) {
+  async function exportSidebarSession(
+    projectId: string,
+    session: SessionSummary,
+  ) {
     setSessionActionLoading("export");
     try {
       const result = await api.sessions.exportHtml(projectId, session.filePath);
@@ -2199,7 +2270,7 @@ export function App() {
       "webServiceHost" in patch ||
       "webServicePort" in patch;
     if (changesWebService) {
-    setWebServiceChanging(true);
+      setWebServiceChanging(true);
       setSettingsNotice(
         patch.webServiceEnabled === false
           ? t("app.webStopping")
@@ -2219,11 +2290,7 @@ export function App() {
           ? t("app.shellProxySaved")
           : t("app.shellProxyDisabled");
         setPiProxyNoticeTone("info");
-        setPiProxyNotice(
-          next.piProxyEnabled
-            ? t("app.shellProxySaved")
-            : "",
-        );
+        setPiProxyNotice(next.piProxyEnabled ? t("app.shellProxySaved") : "");
       }
       if (
         "desktopProxyEnabled" in patch ||
@@ -2395,17 +2462,17 @@ export function App() {
       });
     }
 
-		function onUp() {
-			cancelAnimationFrame(frame);
-			window.removeEventListener("pointermove", onMove);
-			window.removeEventListener("pointerup", onUp);
-			document.body.classList.remove("is-resizing");
-			document.body.classList.remove("is-list-resizing");
-		}
+    function onUp() {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-resizing");
+      document.body.classList.remove("is-list-resizing");
+    }
 
-		document.body.classList.add("is-resizing");
-		if (target === "list") document.body.classList.add("is-list-resizing");
-		window.addEventListener("pointermove", onMove);
+    document.body.classList.add("is-resizing");
+    if (target === "list") document.body.classList.add("is-list-resizing");
+    window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
   }
 
@@ -2457,11 +2524,7 @@ export function App() {
   }
 
   function releaseListHoverSuppression(event: PointerEvent<HTMLDivElement>) {
-    if (
-      listCollapsed &&
-      listHoverRevealSuppressed &&
-      event.clientX > 24
-    ) {
+    if (listCollapsed && listHoverRevealSuppressed && event.clientX > 24) {
       setListHoverRevealSuppressed(false);
     }
   }
@@ -2488,14 +2551,20 @@ export function App() {
         } as React.CSSProperties
       }
     >
-      {!settings.useNativeTitleBar && <div className="window-drag-layer" aria-hidden="true" />}
+      {!settings.useNativeTitleBar && (
+        <div className="window-drag-layer" aria-hidden="true" />
+      )}
       {!settings.useNativeTitleBar && (
         <div className="window-controls" aria-label={t("app.windowControls")}>
           <button
             type="button"
             className={`window-control pin${windowAlwaysOnTop ? " active" : ""}`}
-            aria-label={windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")}
-            title={windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")}
+            aria-label={
+              windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")
+            }
+            title={
+              windowAlwaysOnTop ? t("app.windowUnpin") : t("app.windowPin")
+            }
             onClick={async () => {
               const next = await api.app.toggleAlwaysOnTopWindow();
               setWindowAlwaysOnTop(next);
@@ -2592,15 +2661,18 @@ export function App() {
                 .filter((agent) => agent.sessionPath)
                 .map((agent) => agent.sessionPath),
             );
-            const visibleProjectSessions = (projectSearch
-              ? projectSessions.filter((session) =>
-                  matches(
-                    `${session.name ?? ""}${session.preview}${session.filePath}`,
-                    projectSearch,
-                  ),
-                )
-              : projectSessions
-            ).filter((session) => !activeAgentSessionPaths.has(session.filePath));
+            const visibleProjectSessions = (
+              projectSearch
+                ? projectSessions.filter((session) =>
+                    matches(
+                      `${session.name ?? ""}${session.preview}${session.filePath}`,
+                      projectSearch,
+                    ),
+                  )
+                : projectSessions
+            ).filter(
+              (session) => !activeAgentSessionPaths.has(session.filePath),
+            );
             const sessionDisplayCount =
               visibleSessionCountByProject[project.id] ??
               SIDEBAR_SESSION_PAGE_SIZE;
@@ -2627,7 +2699,9 @@ export function App() {
             const activeSessionShownAsAgent =
               activeAgent?.projectId === project.id &&
               activeAgent.sessionPath != null &&
-              agentDisplay.visibleAgents.some((agent) => agent.id === activeAgentId);
+              agentDisplay.visibleAgents.some(
+                (agent) => agent.id === activeAgentId,
+              );
             const isDraggingProject = draggingProjectId === project.id;
             const isProjectDropTarget = dragOverProjectId === project.id;
             const projectRowClass = [
@@ -2670,6 +2744,9 @@ export function App() {
                   onClick={() => {
                     if (projectDragPreventClickRef.current) return;
                     // 项目节点现在同时承载运行中的 Agent 和历史会话；有任一子项时点击项目行切换展开状态。
+                    const wasCollapsed = collapsedProjects.has(project.id);
+                    const willBeExpanded = wasCollapsed; // 如果之前折叠，点击后会展开
+
                     if (hasProjectChildren) {
                       setCollapsedProjects((prev) => {
                         const next = new Set(prev);
@@ -2678,13 +2755,26 @@ export function App() {
                         return next;
                       });
                     }
+
+                    // 展开项目时加载会话（如果之前未加载过）
+                    if (willBeExpanded && !projectIsChat) {
+                      const hasLoadedSessions = sessionsByProject[project.id]?.length > 0;
+                      if (!hasLoadedSessions) {
+                        void refreshProjectSessions(project.id).catch(() => undefined);
+                      }
+                    }
+
                     setActiveProjectId(project.id);
                     setActiveAgentId(undefined);
                   }}
                 >
                   <span
                     className={`project-fold${isCollapsed ? " folded" : ""}${hasProjectChildren ? " has-agents" : ""}`}
-                    title={isCollapsed ? t("app.projectExpand") : t("app.projectCollapse")}
+                    title={
+                      isCollapsed
+                        ? t("app.projectExpand")
+                        : t("app.projectCollapse")
+                    }
                   >
                     <Play size={12} />
                   </span>
@@ -2774,7 +2864,9 @@ export function App() {
                     }}
                   >
                     <span className="agent-more-branch" />
-                    <span>{t("app.moreAgents", { count: agentDisplay.hiddenCount })}</span>
+                    <span>
+                      {t("app.moreAgents", { count: agentDisplay.hiddenCount })}
+                    </span>
                   </button>
                 )}
                 {!isCollapsed && displayedProjectSessions.length > 0 && (
@@ -2783,8 +2875,10 @@ export function App() {
                       <button
                         key={session.filePath}
                         className={
-                          isSameSessionPath(activeAgent?.sessionPath, session.filePath) &&
-                          !activeSessionShownAsAgent
+                          isSameSessionPath(
+                            activeAgent?.sessionPath,
+                            session.filePath,
+                          ) && !activeSessionShownAsAgent
                             ? "conversation agent-row session-row active"
                             : "conversation agent-row session-row"
                         }
@@ -2798,12 +2892,19 @@ export function App() {
                             session,
                           });
                         }}
-                        onClick={() => void openSidebarSession(project.id, session)}
+                        onClick={() =>
+                          void openSidebarSession(project.id, session)
+                        }
                       >
-                        <span className="session-node-marker" aria-hidden="true" />
+                        <span
+                          className="session-node-marker"
+                          aria-hidden="true"
+                        />
                         <div className="conversation-body">
                           <div className="conversation-title">
-                            <strong>{session.name || t("common.untitled")}</strong>
+                            <strong>
+                              {session.name || t("common.untitled")}
+                            </strong>
                           </div>
                         </div>
                       </button>
@@ -2811,7 +2912,9 @@ export function App() {
                   </div>
                 )}
                 {!isCollapsed && projectSessionsLoading && (
-                  <div className="project-session-loading">{t("app.projectSessionsLoading")}</div>
+                  <div className="project-session-loading">
+                    {t("app.projectSessionsLoading")}
+                  </div>
                 )}
                 {!isCollapsed && hiddenSessionCount > 0 && (
                   <button
@@ -2826,7 +2929,11 @@ export function App() {
                     }}
                   >
                     <span className="agent-more-branch" />
-                    <span>{t("app.projectShowMoreSessions", { count: hiddenSessionCount })}</span>
+                    <span>
+                      {t("app.projectShowMoreSessions", {
+                        count: hiddenSessionCount,
+                      })}
+                    </span>
                   </button>
                 )}
               </div>
@@ -2860,7 +2967,9 @@ export function App() {
             </div>
             <button
               className="icon-button sidebar-collapse-logo"
-              title={listCollapsed ? t("app.expandList") : t("app.collapseList")}
+              title={
+                listCollapsed ? t("app.expandList") : t("app.collapseList")
+              }
               onClick={toggleListCollapsed}
             >
               {listCollapsed ? (
@@ -2933,15 +3042,14 @@ export function App() {
                 >
                   {t("app.new")}
                 </button>
-                <div 
-                  className="session-dropdown-wrapper"
-                  onMouseEnter={() => activeAgentId && setSessionActionsOpen(true)}
-                  onMouseLeave={() => setSessionActionsOpen(false)}
-                >
+                <div className="session-dropdown-wrapper">
                   <button
                     className="session-dropdown-trigger"
                     disabled={!activeAgentId}
                     title={t("app.sessionActions")}
+                    onClick={() =>
+                      activeAgentId && setSessionActionsOpen((open) => !open)
+                    }
                   >
                     <ChevronDown size={14} />
                   </button>
@@ -2967,7 +3075,8 @@ export function App() {
                             setLoadingAction("restart");
                             setSessionActionsOpen(false);
                             try {
-                              const tab = await api.agents.restart(activeAgentId);
+                              const tab =
+                                await api.agents.restart(activeAgentId);
                               setActiveAgentId(tab.id);
                               void refreshRuntimeState(tab.id);
                             } finally {
@@ -3016,6 +3125,37 @@ export function App() {
         </header>
 
         <section className="message-timeline" ref={timelineRef}>
+          {/* 加载更多历史消息按钮 */}
+          {hasMoreMessages && activeAgent && activeAgent.status !== "starting" && (
+            <div style={{
+              display: "flex",
+              justifyContent: "center",
+              padding: "12px 0",
+              borderBottom: "1px solid var(--border-color)"
+            }}>
+              <button
+                onClick={loadMoreMessages}
+                disabled={isLoadingMoreMessages}
+                style={{
+                  padding: "6px 16px",
+                  border: "1px solid var(--border-color)",
+                  borderRadius: "6px",
+                  background: "var(--bg-secondary)",
+                  color: "var(--text-primary)",
+                  fontSize: "13px",
+                  cursor: isLoadingMoreMessages ? "not-allowed" : "pointer",
+                  opacity: isLoadingMoreMessages ? 0.6 : 1,
+                  transition: "all 0.2s"
+                }}
+              >
+                {isLoadingMoreMessages
+                  ? "加载中..."
+                  : `加载更多历史消息 (${activeMessages.length - paginatedMessages.length} 条)`
+                }
+              </button>
+            </div>
+          )}
+
           {activeAgent?.status === "starting" && (
             <div className="history-loading">
               <div className="loader" />
@@ -3296,43 +3436,61 @@ export function App() {
       )}
       {drawer && !drawerCollapsed && (
         <aside className="detail-drawer">
-          <DrawerContent
-            panel={drawer}
-            project={drawer === "sessions" ? sessionsProject : undefined}
-            files={files}
-            sessions={sessions}
-            modifiedFiles={modifiedFiles}
-            expandedDirs={expandedDirs}
-            onToggleDirectory={toggleDirectory}
-            pinned={drawerPinned}
-            onTogglePin={toggleDrawerPinned}
-            onCollapse={collapseDrawer}
-            onClose={closeDrawer}
-            onFileContextMenu={(node, x, y) => setFileMenu({ node, x, y })}
-            onRefreshFiles={() => refreshFiles(activeProjectId)}
-            onRefreshSessions={() =>
-              refreshSessions(sessionsProjectId ?? activeProjectId)
+          <LazyWrapper
+            enabled={true}
+            threshold={0}
+            rootMargin="50px"
+            placeholder={
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "100%",
+                color: "var(--text-secondary)",
+                fontSize: "14px"
+              }}>
+                加载中...
+              </div>
             }
-            onOpenSession={(session) =>
-              createAgent(
-                sessionsProjectId ?? activeProjectId,
-                session.filePath,
-                session.name || t("common.untitled"),
-              )
-            }
-            onRenameSession={async (filePath, newName) => {
-              await api.sessions.rename(filePath, newName);
-              await refreshSessions(sessionsProjectId ?? activeProjectId);
-            }}
-            onCopySession={(session) =>
-              copySession(
-                session.filePath,
-                sessionsProjectId ?? activeProjectId,
-              )
-            }
-            onExportSession={exportHistorySession}
-            onDeleteSession={deleteHistorySession}
-          />
+          >
+            <DrawerContent
+              panel={drawer}
+              project={drawer === "sessions" ? sessionsProject : undefined}
+              files={files}
+              sessions={sessions}
+              modifiedFiles={modifiedFiles}
+              expandedDirs={expandedDirs}
+              onToggleDirectory={toggleDirectory}
+              pinned={drawerPinned}
+              onTogglePin={toggleDrawerPinned}
+              onCollapse={collapseDrawer}
+              onClose={closeDrawer}
+              onFileContextMenu={(node, x, y) => setFileMenu({ node, x, y })}
+              onRefreshFiles={() => refreshFiles(activeProjectId)}
+              onRefreshSessions={() =>
+                refreshSessions(sessionsProjectId ?? activeProjectId)
+              }
+              onOpenSession={(session) =>
+                createAgent(
+                  sessionsProjectId ?? activeProjectId,
+                  session.filePath,
+                  session.name || t("common.untitled"),
+                )
+              }
+              onRenameSession={async (filePath, newName) => {
+                await api.sessions.rename(filePath, newName);
+                await refreshSessions(sessionsProjectId ?? activeProjectId);
+              }}
+              onCopySession={(session) =>
+                copySession(
+                  session.filePath,
+                  sessionsProjectId ?? activeProjectId,
+                )
+              }
+              onExportSession={exportHistorySession}
+              onDeleteSession={deleteHistorySession}
+            />
+          </LazyWrapper>
         </aside>
       )}
       {drawer && drawerCollapsed && (
@@ -3418,7 +3576,10 @@ export function App() {
             openSessionRename(sessionMenu.projectId, sessionMenu.session)
           }
           onExport={() => {
-            void exportSidebarSession(sessionMenu.projectId, sessionMenu.session);
+            void exportSidebarSession(
+              sessionMenu.projectId,
+              sessionMenu.session,
+            );
           }}
           onCopySession={() => {
             void copySidebarSession(sessionMenu.projectId, sessionMenu.session);
@@ -3776,7 +3937,9 @@ function FeedbackModal({
             <div className="feedback-section-header">
               <strong>{t("feedback.environmentTitle")}</strong>
               <small>
-                {loading ? t("feedback.reportLoading") : t("feedback.environmentHint")}
+                {loading
+                  ? t("feedback.reportLoading")
+                  : t("feedback.environmentHint")}
               </small>
             </div>
             <pre className="feedback-environment-content">{report}</pre>
@@ -3784,7 +3947,9 @@ function FeedbackModal({
         </div>
         <div className="feedback-actions">
           <button onClick={copyReport}>{t("feedback.copyReport")}</button>
-          <button onClick={() => onOpenExternal(authorUrl)}>{t("feedback.authorGithub")}</button>
+          <button onClick={() => onOpenExternal(authorUrl)}>
+            {t("feedback.authorGithub")}
+          </button>
           <button className="primary" onClick={() => onOpenExternal(issueUrl)}>
             {t("feedback.openIssue")}
           </button>
@@ -3815,14 +3980,20 @@ function buildFeedbackReport(input: {
     input.steps.trim() || t("feedback.report.stepsEmpty"),
     "",
     t("feedback.report.environment"),
-    t("feedback.report.piDesktop", { value: input.environment?.appVersion ?? input.fallbackVersion }),
+    t("feedback.report.piDesktop", {
+      value: input.environment?.appVersion ?? input.fallbackVersion,
+    }),
     t("feedback.report.system", {
       value: input.environment
         ? `${input.environment.platform} ${input.environment.arch}`
         : t("feedback.report.readFailed"),
     }),
-    t("feedback.report.electron", { value: input.environment?.electronVersion ?? "-" }),
-    t("feedback.report.chrome", { value: input.environment?.chromeVersion ?? "-" }),
+    t("feedback.report.electron", {
+      value: input.environment?.electronVersion ?? "-",
+    }),
+    t("feedback.report.chrome", {
+      value: input.environment?.chromeVersion ?? "-",
+    }),
     t("feedback.report.node", { value: input.environment?.nodeVersion ?? "-" }),
     t("feedback.report.project", { value: projectPath }),
     t("feedback.report.piStatus", {
@@ -3832,11 +4003,17 @@ function buildFeedbackReport(input: {
           : t("feedback.report.piMissing")
         : t("feedback.report.readFailed"),
     }),
-    t("feedback.report.piCommand", { value: pi?.command ? maskHomePath(pi.command) : "-" }),
+    t("feedback.report.piCommand", {
+      value: pi?.command ? maskHomePath(pi.command) : "-",
+    }),
     t("feedback.report.piVersion", { value: pi?.version || "-" }),
     ...(pi?.error ? [t("feedback.report.piError", { value: pi.error })] : []),
     ...(input.environmentError
-      ? [t("feedback.report.environmentError", { value: input.environmentError })]
+      ? [
+          t("feedback.report.environmentError", {
+            value: input.environmentError,
+          }),
+        ]
       : []),
   ].join("\n");
 }
@@ -3858,7 +4035,9 @@ function UpdateModal(props: {
     <div className="modal-backdrop update-backdrop">
       <section className="update-modal">
         <div className="modal-header">
-          <strong>{t("update.availableTitle", { version: props.info.latestVersion })}</strong>
+          <strong>
+            {t("update.availableTitle", { version: props.info.latestVersion })}
+          </strong>
           <CloseIconButton label={t("common.close")} onClick={props.onClose} />
         </div>
         <div className="update-body">
@@ -3883,7 +4062,9 @@ function UpdateModal(props: {
           </div>
         </div>
         <div className="update-actions">
-          <button onClick={props.onOpenRelease}>{t("update.openRelease")}</button>
+          <button onClick={props.onOpenRelease}>
+            {t("update.openRelease")}
+          </button>
           <button
             className="primary"
             disabled={props.checking}

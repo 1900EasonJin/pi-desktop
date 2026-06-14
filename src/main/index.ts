@@ -247,7 +247,11 @@ function createWindow() {
 		return { action: "deny" };
 	});
 
-	mainWindow.once("ready-to-show", () => mainWindow?.show());
+	mainWindow.once("ready-to-show", () => {
+		mainWindow?.show();
+		// 窗口显示后立即最大化，提供更好的默认工作空间
+		mainWindow?.maximize();
+	});
 
 	// 关闭窗口时根据设置决定：隐藏到托盘还是正常退出
 	mainWindow.on("close", (event) => {

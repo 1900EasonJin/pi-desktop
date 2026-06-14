@@ -4,6 +4,24 @@
 
 All notable changes to PiDeck are documented here.
 
+## [Unreleased]
+
+### Added
+- Performance testing script to validate optimization improvements
+
+### Improved
+- **Startup experience**: Application window now maximizes automatically on launch for better workspace utilization
+- **Composer input**: Increased default input box height from 132px to 160px for better multi-line editing and code snippet input
+- **Historical session performance**: Significantly reduced input lag when opening sessions with many messages (average 90.3% performance improvement)
+  - Message update optimization: Added reference equality check to skip unnecessary state updates
+  - Suggestion calculation optimization: Suggestions are now only computed when the dropdown is open
+  - Modified files calculation optimization: Computation now only triggers when message count changes
+  - Outline calculation optimization: Reduced re-computation frequency by optimizing dependencies
+- **Input responsiveness**: Typing in the composer is now more responsive, especially in long conversation sessions
+
+### Fixed
+- Settings persistence in Windows portable mode now works correctly across restarts
+
 ## v0.5.0 - 2026-06-14
 
 ### Added
