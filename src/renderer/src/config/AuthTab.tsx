@@ -240,7 +240,7 @@ export function AuthTab(props: {
 								onClick={() => props.onToggleAuth(name)}
 							>
 						{batchMode && (
-							<label className="config-batch-checkbox">
+							<label className="config-batch-checkbox" onClick={(e) => e.stopPropagation()}>
 								<input
 									type="checkbox"
 									checked={selectedAuths.has(name)}
