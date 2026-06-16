@@ -4146,7 +4146,13 @@ function FeedbackModal({
     fallbackVersion: appInfo.version,
     environmentError: error,
   });
-  const issueUrl = `https://github.com/ayuayue/pi-desktop/issues/new?title=${encodeURIComponent(t("feedback.issueTitle"))}&body=${encodeURIComponent(report)}`;
+
+  // 从用户描述中提取简短摘要作为 issue 标题的一部分
+  const descriptionSummary = description.trim().split('\n')[0].slice(0, 60);
+  const issueTitle = descriptionSummary
+    ? `${t("feedback.issueTitle")}${descriptionSummary}`
+    : t("feedback.issueTitle") + t("feedback.issueTitleEmpty");
+  const issueUrl = `https://github.com/ayuayue/pi-desktop/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(report)}`;
   const authorUrl = "https://github.com/ayuayue";
 
   async function copyReport() {

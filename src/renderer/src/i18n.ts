@@ -426,6 +426,7 @@ const zhCN = {
   "errors.nonJsonResponse": "服务返回了非 JSON 响应：{status} {statusText}",
   "feedback.title": "问题反馈",
   "feedback.issueTitle": "问题反馈：",
+  "feedback.issueTitleEmpty": "（请描述问题）",
   "feedback.intro": "填写问题后，可复制内容或打开 GitHub Issue；也可发送邮件到",
   "feedback.descriptionLabel": "遇到的问题",
   "feedback.descriptionHint": "请描述你遇到的问题或想要的功能",
@@ -1151,6 +1152,7 @@ const enUS: Record<TranslationKey, string> = {
     "Service returned a non-JSON response: {status} {statusText}",
   "feedback.title": "Feedback",
   "feedback.issueTitle": "Feedback: ",
+  "feedback.issueTitleEmpty": "(Please describe the issue)",
   "feedback.intro":
     "Describe the issue, then copy the report or open a GitHub Issue. You can also email",
   "feedback.descriptionLabel": "Issue",
