@@ -381,19 +381,6 @@ export class ConfigManager {
 				{ url: fallbackUrl, headers },
 			];
 	}
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
-			});
-			const primaryUrl = /\/v1$/i.test(u) ? `${u}/models` : `${u}/v1/models`;
-			const fallbackUrl = `${u}/models`;
-
-			return primaryUrl === fallbackUrl
-				? [{ url: primaryUrl, headers }]
-				: [
-					{ url: primaryUrl, headers },
-					{ url: fallbackUrl, headers },
-				];
-		}
 
 
 	private parseModelsResponse(
