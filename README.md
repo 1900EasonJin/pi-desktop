@@ -8,7 +8,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Electron](https://img.shields.io/badge/Electron-38-47848f)
 ![React](https://img.shields.io/badge/React-19-61dafb)
-![Version](https://img.shields.io/badge/version-0.6.1-green)
+![Version](https://img.shields.io/badge/version-0.6.2-green)
 
 `PiDeck` **不是** pi 的分支。它是一个轻量 Electron 外壳，通过启动多个 `pi --mode rpc` 进程，将项目管理、会话管理、对话界面、配置管理和工具编排整合到一个原生桌面应用中——所有 Agent 能力由 pi 原生提供。
 
@@ -16,19 +16,16 @@
 
 ## 📋 更新日志
 
-> **最新版本 v0.6.1**（2026-06-16）
+> **最新版本 v0.6.2**（2026-06-22）
 
-### v0.6.1 更新
-- 🚀 配置管理批量删除与复制：Provider 和 Auth 支持批量删除和一键复制
-- 🚀 删除确认对话框：删除 Provider、Model、Auth 时弹出确认提示
-- 🚀 Auth 供应商选择器：内置 29 个预配置供应商，附带环境变量和获取链接
-- 🚀 Provider 配置指南：API 类型说明、兼容性配置、排错指南
-- 🚀 Auth 配置指南：三步引导完成认证配置
-- 🚀 模型选择器分组折叠：按供应商分组，搜索时自动展开
-- 🚀 API 类型下拉优化：新增标签和详细描述
-- 🚀 User-Agent 预设扩展：新增 claude-cli、claude-code 等预设
-- ✨ 界面优化：会话区域 header 紧凑化、模型选择器树形展示、新会话排序、滚动条显示
-- 🐛 多项 Bug 修复：Agent 列表换行、状态切换丢失、连接测试误报等
+### v0.6.2 更新
+- 🚀 项目子项统一列表：Agent 和历史会话混排，默认显示 5 项
+- 🚀 外部编辑器管理：设置中新增编辑器配置页，支持检测/启用/禁用
+- ✨ 顶部操作按钮统一：“新会话”“文件”“终端”视觉一致
+- ✨ 日志页优化：级别筛选和时间范围筛选
+- 🐛 修复历史会话重复显示/激活问题
+- 🐛 修复关闭 Agent 后再次打开历史会话消息空白
+- 🐛 修复单纯打开历史会话导致排序提前
 
 [查看完整更新日志 →](CHANGELOG.zh-CN.md)
 

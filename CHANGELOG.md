@@ -6,6 +6,37 @@ All notable changes to PiDeck are documented here.
 
 ## [Unreleased]
 
+## v0.6.2 - 2026-06-22
+
+### 🚀 New Features
+
+- **Unified project child list**: Agents and history sessions now share a single,
+  time-sorted list under each project (max 5 items by default)
+- **External Editor Management**: New UI in Settings to detect, enable/disable,
+  and configure external editors (VS Code, Cursor, Zed, JetBrains IDEs)
+- **Windows Registry editor detection**: Detect installed editors via registry
+  for more accurate auto-discovery
+- **Fork/switch session improvements**: File viewer and diff tools enhanced
+  with Git workspace change tracking
+
+### ✨ UI Polish
+
+- **Header action buttons**: "New Session", "Files" and "Terminal" now share
+  consistent height, padding, font weight and baseline
+- **Logs page**: Added log level filter and time range filter
+- **Homepage link**: Added PiDeck website button in bottom-left sidebar
+
+### 🐛 Bug Fixes
+
+- **History session duplicate**: Fixed agent/history session duplicate display
+  caused by path case/separator mismatch; added path normalization
+- **History session blank content**: Removed warmPool process reuse (parked process
+  could serve stale session state)
+- **Session order promotion**: Clicking on a history session without sending a
+  message no longer pushes it to the top of the list
+- **Rapid double-click on history**: Main-process lock prevents concurrent
+  agent creation for the same session file
+
 ## v0.6.1 - 2026-06-16
 
 ### 🚀 New Features

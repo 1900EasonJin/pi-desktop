@@ -8,7 +8,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Electron](https://img.shields.io/badge/Electron-38-47848f)
 ![React](https://img.shields.io/badge/React-19-61dafb)
-![Version](https://img.shields.io/badge/version-0.6.1-green)
+![Version](https://img.shields.io/badge/version-0.6.2-green)
 
 `PiDeck` is **not** a fork of pi. It is a lightweight Electron shell that orchestrates multiple `pi --mode rpc` processes, providing a native desktop UI for projects, sessions, conversations, configuration, and tool orchestration — all powered by pi's native agent capabilities.
 
@@ -16,18 +16,16 @@
 
 ## 📋 Changelog
 
-> **Latest: v0.6.1** (2026-06-16)
+> **Latest: v0.6.2** (2026-06-22)
 
-### v0.6.1 Updates
-- 🚀 Config management: batch delete and one-click duplicate for providers/auth, with delete confirmation dialogs
-- 🚀 Auth provider picker: 29 pre-configured providers with env vars and setup links
-- 🚀 Provider config guide: API type reference, compatibility guide, and troubleshooting
-- 🚀 Auth config guide: step-by-step guidance for setting up credentials
-- 🚀 Collapsible model groups: model picker supports collapsing provider groups, auto-expand on search
-- 🚀 API type dropdown with descriptions: helps users choose the right API type
-- 🚀 User-Agent presets: added claude-cli, claude-code, Kilo-Code and more
-- ✨ UI polish: compact chat header, tree-style model picker, new session sorting, visible scrollbars
-- 🐛 Bug fixes: agent status text wrapping, status loss on tab switch, false 404 in connection test, and more
+### v0.6.2 Updates
+- 🚀 Unified project child list: agents and history sessions mixed, max 5 items
+- 🚀 External Editor Management: detect, enable/disable editors from Settings
+- ✨ Header button alignment: "New Session", "Files", "Terminal" visually consistent
+- ✨ Logs page: level filter and time range filter
+- 🐛 Fix: history session duplicate display/activation
+- 🐛 Fix: blank messages when re-opening history session after close
+- 🐛 Fix: session order promoted by just clicking without sending message
 
 [View Full Changelog →](CHANGELOG.md)
 
