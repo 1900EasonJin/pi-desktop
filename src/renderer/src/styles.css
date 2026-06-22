@@ -2544,10 +2544,24 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 .markdown-body {
 	max-width: 100%;
 	min-width: 0;
-	overflow-x: clip;
+	/* 列表 marker 会绘制到内容盒左侧，不能用 clip，否则项目符号会被裁掉。 */
+	overflow-x: visible;
 }
 .markdown-body p {
 	margin: 0 0 8px;
+}
+.markdown-body ul,
+.markdown-body ol {
+	box-sizing: border-box;
+	margin: 6px 0 10px;
+	padding-left: 1.45em;
+}
+.markdown-body li {
+	padding-left: 0.2em;
+	margin: 3px 0;
+}
+.markdown-body li > p {
+	margin: 0;
 }
 .markdown-body p:last-child {
 	margin-bottom: 0;
@@ -6243,6 +6257,18 @@ a.config-btn {
 	box-sizing: border-box;
 }
 
+/* 在段落中作为链接使用的 button，保持文本链接外观并继承字体 */
+.config-link-like {
+	all: unset;
+	color: var(--color-accent);
+	cursor: pointer;
+	text-decoration: underline;
+	white-space: nowrap;
+}
+.config-link-like:hover {
+	color: var(--color-accent-strong);
+}
+
 .config-btn:hover:not(:disabled) {
 	background: var(--color-bg-hover);
 	border-color: var(--color-border-strong);
@@ -9205,11 +9231,15 @@ a.config-btn {
 	padding-left: 20px;
 	margin: var(--space-1) 0;
 }
-.feishu-help-content a {
+.feishu-help-content a,
+.feishu-help-link {
+	all: unset;
 	color: var(--color-accent);
 	text-decoration: none;
+	cursor: pointer;
 }
-.feishu-help-content a:hover {
+.feishu-help-content a:hover,
+.feishu-help-link:hover {
 	text-decoration: underline;
 }
 
@@ -9307,8 +9337,8 @@ a.config-btn {
 	left: 0;
 	bottom: calc(100% + 8px);
 	z-index: 130;
-	min-width: 280px;
-	max-width: 340px;
+	min-width: 420px;
+	max-width: 520px;
 	padding: 8px;
 	border: 1px solid var(--color-border-subtle);
 	border-radius: var(--radius-lg);
@@ -9478,9 +9508,10 @@ a.config-btn {
 }
 .feishu-link-bot-badges {
 	display: flex;
-	flex-wrap: wrap;
+	flex-wrap: nowrap;
 	gap: 4px;
 	margin-top: 2px;
+	overflow: hidden;
 }
 .feishu-link-bot-badge {
 	font-size: 10px;
@@ -9512,6 +9543,17 @@ a.config-btn {
 .feishu-link-bot-check.visible {
 	background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 	opacity: 1;
+}
+.feishu-link-spinner {
+	width: 12px;
+	height: 12px;
+	border: 2px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+	border-top-color: var(--color-accent);
+	border-radius: 50%;
+	animation: feishu-link-spin 0.75s linear infinite;
+}
+@keyframes feishu-link-spin {
+	to { transform: rotate(360deg); }
 }
 
 .feishu-link-popover-footer {
@@ -9707,6 +9749,33 @@ a.config-btn {
 .config-im-test-result.warn {
 	background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 	color: var(--color-warning);
+}
+.config-im-test-result.info {
+	background: var(--color-bg-muted);
+	color: var(--color-text-secondary);
+}
+
+/* 添加 Bot 时连接成功后的 Open ID 区域 */
+.config-im-openid-section {
+	padding: var(--space-2);
+	border: 1px solid var(--color-accent);
+	border-radius: var(--radius-md);
+	background: var(--color-accent-soft);
+}
+.config-im-openid-hint {
+	font-size: var(--font-size-micro);
+	color: var(--color-text-secondary);
+	margin-top: 4px;
+	line-height: 1.5;
+}
+.config-im-connected-info {
+	padding: 8px 12px;
+	border-radius: var(--radius-sm);
+	background: var(--color-accent-soft);
+	color: var(--color-accent);
+	font-size: var(--font-size-caption);
+	font-weight: 500;
+	white-space: nowrap;
 }
 
 .config-im-form-actions {

@@ -493,6 +493,12 @@ const api = {
 				success: boolean;
 				message: string;
 			}>,
+		connectTemp: (input: FeishuConnectInput) =>
+			ipcRenderer.invoke(ipcChannels.feishuConnectTemp, input) as Promise<{
+				success: boolean;
+				message: string;
+				botInfo?: { id: string; name: string };
+			}>,
 		disconnect: () =>
 			ipcRenderer.invoke(ipcChannels.feishuDisconnect) as Promise<{ success: boolean }>,
 		connectByBot: (botId: string) =>
@@ -530,6 +536,10 @@ const api = {
 			subscribe(ipcChannels.feishuMessages, callback),
 		onBindingsChanged: (callback: (bindings: FeishuChatBinding[]) => void) =>
 			subscribe(ipcChannels.feishuBindingsChanged, callback),
+		onWhoamiResult: (callback: (openId: string) => void) =>
+			subscribe(ipcChannels.feishuWhoamiResult, callback),
+		onBotsChanged: (callback: (bots: FeishuBotConfig[]) => void) =>
+			subscribe(ipcChannels.feishuBotsChanged, callback),
 		sessionBotGet: (agentId: string) =>
 			ipcRenderer.invoke(ipcChannels.feishuSessionBotGet, agentId) as Promise<string | null>,
 		sessionBotSet: (agentId: string, botId: string | null) =>

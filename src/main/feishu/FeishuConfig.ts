@@ -34,12 +34,14 @@ function getFeishuBindingsPath(botId: string): string {
 export type FeishuMultiBotConfig = {
 	version: 2;
 	bots: FeishuBotConfig[];
+	/** 删除 Bot 只移除配置，不删除绑定文件；重新添加同一 App ID 时复用旧 ID 防止重复建群。 */
+	deletedBotIdsByAppId?: Record<string, string>;
 };
 
 function readConfig(): FeishuMultiBotConfig {
 	const path = getFeishuConfigPath();
 	if (!existsSync(path)) {
-		return { version: 2, bots: [] };
+		return { version: 2, bots: [], deletedBotIdsByAppId: {} };
 	}
 	try {
 		const raw = readFileSync(path, "utf-8");
@@ -65,7 +67,7 @@ function readConfig(): FeishuMultiBotConfig {
 
 		return parsed as FeishuMultiBotConfig;
 	} catch {
-		return { version: 2, bots: [] };
+		return { version: 2, bots: [], deletedBotIdsByAppId: {} };
 	}
 }
 
@@ -96,17 +98,26 @@ export function addBot(input: {
 	requireMention?: boolean;
 }): FeishuBotConfig {
 	const config = readConfig();
+	const appId = input.appId.trim();
+	const existingIndex = config.bots.findIndex((b) => b.appId === appId);
+	const reusedId = config.deletedBotIdsByAppId?.[appId];
 	const bot: FeishuBotConfig = {
-		id: randomUUID(),
+		// 同一飞书应用重新添加时复用旧 botId，旧绑定文件才能继续按 sessionPath/chatId 复用。
+		id: existingIndex >= 0 ? config.bots[existingIndex].id : (reusedId || randomUUID()),
 		name: input.name,
 		enabled: true,
-		appId: input.appId,
+		appId,
 		appSecret: encryptSecret(input.appSecret),
 		defaultWorkspaceId: input.defaultWorkspaceId,
 		defaultUserOpenId: input.defaultUserOpenId,
 		requireMention: input.requireMention ?? true,
 	};
-	config.bots.push(bot);
+	if (existingIndex >= 0) {
+		config.bots[existingIndex] = { ...config.bots[existingIndex], ...bot };
+	} else {
+		config.bots.push(bot);
+	}
+	if (config.deletedBotIdsByAppId) delete config.deletedBotIdsByAppId[appId];
 	writeConfig(config);
 	return bot;
 }
@@ -130,9 +141,15 @@ export function updateBot(botId: string, patch: Partial<FeishuBotConfig>): Feish
 /** 删除 Bot */
 export function removeBot(botId: string): boolean {
 	const config = readConfig();
+	const removed = config.bots.find((b) => b.id === botId);
 	const before = config.bots.length;
 	config.bots = config.bots.filter((b) => b.id !== botId);
 	if (config.bots.length === before) return false;
+	if (removed?.appId) {
+		// 只删除 Bot 配置，不删除群绑定文件；记录 appId → botId 供后续重加同一应用时复用。
+		config.deletedBotIdsByAppId = config.deletedBotIdsByAppId ?? {};
+		config.deletedBotIdsByAppId[removed.appId] = removed.id;
+	}
 	writeConfig(config);
 	return true;
 }

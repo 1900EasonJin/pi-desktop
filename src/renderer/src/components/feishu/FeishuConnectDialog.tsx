@@ -13,9 +13,11 @@ type Props = {
 	onConnect: (appId: string, appSecret: string, name: string, defaultUserOpenId?: string) => Promise<{ success: boolean; message: string }>;
 	onTest: (appId: string, appSecret: string) => Promise<FeishuTestResult>;
 	connecting: boolean;
+	/** 打开外部文档链接；不传时回退到 window.open */
+	onOpenExternal?: (url: string) => Promise<void>;
 };
 
-export function FeishuConnectDialog({ onClose, onConnect, onTest, connecting }: Props) {
+export function FeishuConnectDialog({ onClose, onConnect, onTest, connecting, onOpenExternal }: Props) {
 	const [appId, setAppId] = useState("");
 	const [appSecret, setAppSecret] = useState("");
 	const [botName, setBotName] = useState("");
@@ -44,6 +46,14 @@ export function FeishuConnectDialog({ onClose, onConnect, onTest, connecting }: 
 			setTesting(false);
 		}
 	}, [appId, appSecret, onTest]);
+
+	const openExternal = useCallback(async (url: string) => {
+		if (onOpenExternal) {
+			await onOpenExternal(url);
+		} else {
+			window.open(url, "_blank", "noopener,noreferrer");
+		}
+	}, [onOpenExternal]);
 
 	const handleConnect = useCallback(async () => {
 		if (!appId.trim() || !appSecret.trim()) {
@@ -191,9 +201,9 @@ export function FeishuConnectDialog({ onClose, onConnect, onTest, connecting }: 
 					{showHelp && (
 						<div className="feishu-help-content">
 							<p>1. 打开{" "}
-								<a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer">
+								<button className="feishu-help-link" onClick={() => void openExternal("https://open.feishu.cn/app")}>
 									飞书开放平台
-								</a>
+								</button>
 							</p>
 							<p>2. 创建企业自建应用</p>
 							<p>3. 在「凭证与基础信息」中获取 App ID 和 App Secret</p>

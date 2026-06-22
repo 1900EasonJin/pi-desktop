@@ -500,6 +500,8 @@ export type FeishuBridgeStatus = {
 	activeBindings: number;
 	connectedAt?: number;
 	errorMessage?: string;
+	/** 当前 bridge 连接的 Bot 配置 ID，用于配置页精确标记连接状态 */
+	botId?: string;
 	botOpenId?: string;
 	botName?: string;
 };

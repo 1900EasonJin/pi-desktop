@@ -82,6 +82,8 @@ type FeishuApiRaw = {
 	bindingsList?: () => Promise<FeishuChatBinding[]>;
 	onStatus?: (cb: (s: FeishuBridgeStatus) => void) => () => void;
 	connect?: (input: { appId: string; appSecret: string; name: string }) => Promise<{ success: boolean; message: string }>;
+	/** 临时连接（不保存 bot 配置），返回 botInfo 用于后续保存 */
+	connectTemp?: (input: { appId: string; appSecret: string; name?: string }) => Promise<{ success: boolean; message: string; botInfo?: { id: string; name: string } }>;
 	connectByBot?: (botId: string) => Promise<{ success: boolean; message: string }>;
 	disconnect?: () => Promise<unknown>;
 	botAdd?: (input: { appId: string; appSecret: string; name?: string; defaultUserOpenId?: string }) => Promise<{ success: boolean; bot?: FeishuBotConfig; error?: string }>;
@@ -90,6 +92,8 @@ type FeishuApiRaw = {
 	testConnection?: (appId: string, appSecret: string) => Promise<FeishuTestResult>;
 	bindingRemove?: (chatId: string) => Promise<boolean>;
 	botConfig?: (botId: string, patch: Partial<FeishuBotConfig>) => Promise<FeishuBotConfig | undefined>;
+	/** 监听飞书 whoami 结果 */
+	onWhoamiResult?: (cb: (openId: string) => void) => () => void;
 };
 
 export function ImTab(_props: Props) {
@@ -105,10 +109,12 @@ export function ImTab(_props: Props) {
 	const [appSecret, setAppSecret] = useState("");
 	const [botName, setBotName] = useState("");
 	const [adding, setAdding] = useState(false);
-	const [testResult, setTestResult] = useState<FeishuTestResult | null>(null);
-	const [testing, setTesting] = useState(false);
 	const [expandedBotIds, setExpandedBotIds] = useState<Set<string>>(new Set());
+	// 添加 Bot 流程：连接 → 获取 open_id → 保存
 	const [addFormOpenId, setAddFormOpenId] = useState("");
+	const [addStep, setAddStep] = useState<"input" | "connected" | "saving">("input");
+	const [addError, setAddError] = useState<string | null>(null);
+	const [addConnecting, setAddConnecting] = useState(false);
 	const [editingOpenIdBotId, setEditingOpenIdBotId] = useState<string | null>(null);
 	const [editOpenIdValue, setEditOpenIdValue] = useState("");
 	const [deleteConfirmBotId, setDeleteConfirmBotId] = useState<string | null>(null);
@@ -121,6 +127,16 @@ export function ImTab(_props: Props) {
 	const [connecting, setConnecting] = useState(false);
 
 	const api = (window as unknown as { piDesktop?: { feishu?: FeishuApiRaw } }).piDesktop?.feishu;
+
+	/** 使用主进程能力打开外部链接；比原生 <a target="_blank"> 更可靠，避免 Electron 内嵌窗口导航被拦截。 */
+	const openExternal = useCallback(async (url: string) => {
+		const appApi = (window as unknown as { piDesktop?: { app?: { openExternal: (u: string) => Promise<void> } } }).piDesktop?.app;
+		if (appApi?.openExternal) {
+			await appApi.openExternal(url);
+		} else {
+			window.open(url, "_blank", "noopener,noreferrer");
+		}
+	}, []);
 
 	const loadData = useCallback(async () => {
 		if (!api) { setLoading(false); return; }
@@ -151,24 +167,48 @@ export function ImTab(_props: Props) {
 		return api.onStatus?.(setStatus);
 	}, [api]);
 
-	const handleTest = useCallback(async () => {
-		if (!api || !appId.trim() || !appSecret.trim()) return;
-		setTesting(true);
-		setTestResult(null);
-		try {
-			const result = await api.testConnection!(appId.trim(), appSecret.trim());
-			setTestResult(result);
-		} catch (e) {
-			setTestResult({ success: false, message: e instanceof Error ? e.message : String(e) });
-		} finally {
-			setTesting(false);
-		}
-	}, [api, appId, appSecret]);
+	// 监听飞书 whoami 结果：用户在飞书给 Bot 发 /whoami 后，自动填入 open_id
+	useEffect(() => {
+		if (!api?.onWhoamiResult) return;
+		return api.onWhoamiResult((openId: string) => {
+			setAddFormOpenId(openId);
+		});
+	}, [api]);
 
-	const handleAddBot = useCallback(async () => {
+	/**
+	 * 临时连接：验证凭证可用性并建立 WebSocket，但不保存到磁盘。
+	 * 连接成功后用户去飞书发 /whoami 获取 open_id，然后手动保存。
+	 */
+	const handleConnectTemp = useCallback(async () => {
+		if (!api?.connectTemp || !appId.trim() || !appSecret.trim()) return;
+		setAddConnecting(true);
+		setAddError(null);
+		try {
+			const result = await api.connectTemp({
+				appId: appId.trim(),
+				appSecret: appSecret.trim(),
+				name: botName.trim() || t("config.im.botDefaultName"),
+			});
+			if (result.success) {
+				setAddStep("connected");
+			} else {
+				setAddError(result.message);
+			}
+		} catch (e) {
+			setAddError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setAddConnecting(false);
+		}
+	}, [api, appId, appSecret, botName]);
+
+	/** 保存 bot 配置（含 open_id） */
+	const handleSaveBot = useCallback(async () => {
 		if (!api || !appId.trim() || !appSecret.trim()) return;
 		setAdding(true);
+		setAddError(null);
 		try {
+			// 先断开临时连接，botAdd 内部会重新创建 bridge 并持久化
+			await api.disconnect?.();
 			const result = await api.botAdd!({
 				appId: appId.trim(),
 				appSecret: appSecret.trim(),
@@ -180,14 +220,14 @@ export function ImTab(_props: Props) {
 				setAppSecret("");
 				setBotName("");
 				setAddFormOpenId("");
+				setAddStep("input");
 				setShowAddForm(false);
-				setTestResult(null);
 				await loadData();
 			} else {
-				setError(result.error ?? t("config.im.addFailed"));
+				setAddError(result.error ?? t("config.im.addFailed"));
 			}
 		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e));
+			setAddError(e instanceof Error ? e.message : String(e));
 		} finally {
 			setAdding(false);
 		}
@@ -292,17 +332,15 @@ export function ImTab(_props: Props) {
 						>
 							{t("config.im.guide")}
 						</button>
-						<a
-							href="https://xid01i1952l.feishu.cn/wiki/Yf8Gw5QW3is7xdkuG98cvRVen5d?from=from_copylink"
-							target="_blank"
-							rel="noreferrer"
+						<button
 							className="config-btn"
+							onClick={() => openExternal("https://xid01i1952l.feishu.cn/wiki/Yf8Gw5QW3is7xdkuG98cvRVen5d?from=from_copylink")}
 						>
 							{t("config.im.onlineGuide")}
-						</a>
+						</button>
 						<button
 							className="config-btn primary"
-							onClick={() => { setShowAddForm((v) => !v); setTestResult(null); setAppId(""); setAppSecret(""); setBotName(""); setAddFormOpenId(""); }}
+							onClick={() => { if (showAddForm && addStep === "connected") void api?.disconnect?.(); setShowAddForm((v) => !v); setAddStep("input"); setAddError(null); setAppId(""); setAppSecret(""); setBotName(""); setAddFormOpenId(""); }}
 						>
 							{showAddForm ? t("common.cancel") : t("config.im.addBot")}
 						</button>
@@ -316,9 +354,10 @@ export function ImTab(_props: Props) {
 							<input
 								type="text"
 								value={appId}
-								onChange={(e) => { setAppId(e.target.value); setTestResult(null); }}
+								onChange={(e) => { setAppId(e.target.value); setAddError(null); if (addStep !== "input") setAddStep("input"); }}
 								placeholder="cli_xxxxxxxxxxxx"
 								className="config-input"
+								disabled={addStep !== "input"}
 							/>
 						</div>
 						<div className="config-field">
@@ -326,9 +365,10 @@ export function ImTab(_props: Props) {
 							<input
 								type="password"
 								value={appSecret}
-								onChange={(e) => { setAppSecret(e.target.value); setTestResult(null); }}
+								onChange={(e) => { setAppSecret(e.target.value); setAddError(null); if (addStep !== "input") setAddStep("input"); }}
 								placeholder="••••••••••••••••"
 								className="config-input"
+								disabled={addStep !== "input"}
 							/>
 						</div>
 						<div className="config-field">
@@ -339,41 +379,62 @@ export function ImTab(_props: Props) {
 								onChange={(e) => setBotName(e.target.value)}
 								placeholder={t("config.im.botNamePlaceholder")}
 								className="config-input"
+								disabled={addStep !== "input"}
 							/>
-						</div>
-						<div className="config-field">
-							<label>{t("config.im.openId")} <span className="config-field-optional">({t("common.optional")})</span></label>
-							<input
-								type="text"
-								value={addFormOpenId}
-								onChange={(e) => setAddFormOpenId(e.target.value)}
-								placeholder="ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-								className="config-input"
-							/>
-							<span className="config-field-hint">{t("config.im.openIdHint")}</span>
 						</div>
 
-						{testResult && (
-							<div className={`config-im-test-result ${testResult.success ? "success" : "warn"}`}>
-								{testResult.success ? "✅ " : "⚠️ "}{testResult.message}
+						{/* 连接成功后才显示 Open ID 输入框 */}
+						{addStep === "connected" && (
+							<div className="config-im-openid-section">
+								<div className="config-field">
+									<label>{t("config.im.openId")} <span className="config-field-required">*</span></label>
+									<input
+										type="text"
+										value={addFormOpenId}
+										onChange={(e) => setAddFormOpenId(e.target.value)}
+										placeholder="ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+										className="config-input"
+									/>
+								</div>
+								<div className="config-im-openid-hint">
+									💡 {t("config.im.openIdHint")}
+								</div>
 							</div>
 						)}
 
+						{addStep === "input" && addConnecting && (
+							<div className="config-im-test-result info">⏳ 正在连接飞书…</div>
+						)}
+
+						{addError && (
+							<div className="config-im-test-result warn">⚠️ {addError}</div>
+						)}
+
 						<div className="config-im-form-actions">
-							<button
-								className="config-btn"
-								onClick={handleTest}
-								disabled={testing || !appId.trim() || !appSecret.trim()}
-							>
-								{testing ? t("config.im.testing") : t("config.im.testConnection")}
-							</button>
-							<button
-								className="config-btn primary"
-								onClick={handleAddBot}
-								disabled={adding || !appId.trim() || !appSecret.trim()}
-							>
-								{adding ? t("config.im.saving") : t("common.save")}
-							</button>
+							{addStep === "input" && (
+								<button
+									className="config-btn primary"
+									onClick={handleConnectTemp}
+									disabled={addConnecting || !appId.trim() || !appSecret.trim()}
+									style={{ flex: 1 }}
+								>
+									{addConnecting ? t("config.im.connecting") : t("config.im.connect")}
+								</button>
+							)}
+							{addStep === "connected" && (
+								<>
+									<div className="config-im-connected-info">✅ 已连接到飞书</div>
+									<button
+										className="config-btn primary"
+										onClick={handleSaveBot}
+										disabled={adding || !addFormOpenId.trim()}
+										style={{ flex: 1 }}
+										title={!addFormOpenId.trim() ? "请先获取 Open ID" : undefined}
+									>
+										{adding ? t("config.im.saving") : "保存 Bot"}
+									</button>
+								</>
+							)}
 						</div>
 					</div>
 				)}
@@ -384,7 +445,8 @@ export function ImTab(_props: Props) {
 
 				{bots.slice(0, visibleBots).map((bot) => {
 					const botBindings = bindings.filter((binding) => binding.botId === bot.id);
-					const isThisConnected = botBindings.length > 0;
+					// 连接状态来自 bridge 当前连接的 botId；绑定数量只代表已有聊天绑定，不等于 Bot 在线状态。
+					const isThisConnected = status.status === "connected" && status.botId === bot.id;
 					const isEditingOpenId = editingOpenIdBotId === bot.id;
 					const isExpanded = expandedBotIds.has(bot.id);
 					const visibleBindingCount = getVisibleBindingsForBot(bot.id);
@@ -606,7 +668,7 @@ export function ImTab(_props: Props) {
 							<p><strong>{t("config.im.guideMethodA")}</strong></p>
 							<p style={{ fontSize: "var(--font-size-micro)", color: "var(--color-text-tertiary)" }}>{t("config.im.guideMethodADesc")}</p>
 							<ol>
-								<li>{t("config.im.guideMethodAStep1a")}<br /><a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" style={{ whiteSpace: "nowrap" }}>https://open.feishu.cn/app</a> → {t("config.im.guideMethodAStep1b")}</li>
+								<li>{t("config.im.guideMethodAStep1a")}<br /><button className="config-link-like" onClick={() => openExternal("https://open.feishu.cn/app")}>https://open.feishu.cn/app</button> → {t("config.im.guideMethodAStep1b")}</li>
 								<li>{t("config.im.guideMethodAStep2")}</li>
 								<li>{t("config.im.guideMethodAStep3")}</li>
 								<li>{t("config.im.guideMethodAStep4")}</li>
@@ -616,7 +678,7 @@ export function ImTab(_props: Props) {
 							<p style={{ marginTop: 16 }}><strong>{t("config.im.guideMethodB")}</strong></p>
 							<p style={{ fontSize: "var(--font-size-micro)", color: "var(--color-text-tertiary)" }}>{t("config.im.guideMethodBDesc")}</p>
 							<ol>
-								<li>{t("config.im.guideMethodBStep1a")}<br /><a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" style={{ whiteSpace: "nowrap" }}>https://open.feishu.cn/app</a> → {t("config.im.guideMethodBStep1b")}</li>
+								<li>{t("config.im.guideMethodBStep1a")}<br /><button className="config-link-like" onClick={() => openExternal("https://open.feishu.cn/app")}>https://open.feishu.cn/app</button> → {t("config.im.guideMethodBStep1b")}</li>
 								<li>{t("config.im.guideMethodBStep2")}</li>
 								<li>{t("config.im.guideMethodBStep3")}<br />
 									<ul className="config-im-guide-perms">

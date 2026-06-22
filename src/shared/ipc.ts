@@ -118,6 +118,8 @@ export const ipcChannels = {
 
 	// ===== 飞书桥接 =====
 	feishuConnect: "feishu:connect",
+	/** 临时连接（不保存 bot 配置），用于首次添加 Bot 时先验证后保存 */
+	feishuConnectTemp: "feishu:connect-temp",
 	feishuDisconnect: "feishu:disconnect",
 	feishuStatus: "feishu:status",
 	feishuStatusRequest: "feishu:status-request",
@@ -131,6 +133,7 @@ export const ipcChannels = {
 	feishuBindingRemove: "feishu:binding-remove",
 	feishuBindingUpdate: "feishu:binding-update",
 	feishuBindingsChanged: "feishu:bindings-changed",
+	feishuBotsChanged: "feishu:bots-changed",
 	feishuMessages: "feishu:messages",
 	feishuQrCode: "feishu:qr-code",
 	feishuConnectByBot: "feishu:connect-by-bot",
@@ -140,4 +143,6 @@ export const ipcChannels = {
 	feishuSessionBotGet: "feishu:session-bot-get",
 	/** 设置指定 Agent 使用的飞书 Bot ID */
 	feishuSessionBotSet: "feishu:session-bot-set",
+	/** 飞书 /whoami 结果推回前端 */
+	feishuWhoamiResult: "feishu:whoami-result",
 } as const;

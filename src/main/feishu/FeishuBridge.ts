@@ -60,6 +60,7 @@ export class FeishuBridge {
 	private wsClient: unknown = null;
 	private client: LarkClient | null = null;
 	private botConfig: FeishuBotConfig;
+	private readonly plainAppSecret?: string;
 	private agentManager: AgentManager;
 	private getWindow: () => BrowserWindow | null;
 	private getProjects: () => Array<{ id: string; name: string; path: string }>;
@@ -108,8 +109,11 @@ export class FeishuBridge {
 		agentManager: AgentManager,
 		getWindow: () => BrowserWindow | null,
 		getProjects: () => Array<{ id: string; name: string; path: string }>,
+		plainAppSecret?: string,
 	) {
 		this.botConfig = botConfig;
+		// 临时连接不会落盘，无法通过 bot id 解密 secret；这里保留一次性明文供 start() 使用。
+		this.plainAppSecret = plainAppSecret;
 		this.agentManager = agentManager;
 		this.getWindow = getWindow;
 		this.getProjects = getProjects;
@@ -117,6 +121,8 @@ export class FeishuBridge {
 
 	getStatus(): FeishuBridgeStatus { return { ...this.status }; }
 	listBindings(): FeishuChatBinding[] { return Array.from(this.chatBindings.values()); }
+	/** 当前 Agent 是否已经手动连接/绑定飞书会话，用于决定是否同步消息。 */
+	hasSessionBinding(agentId: string): boolean { return this.sessionToChat.has(agentId); }
 
 	/** 刷新绑定：重新从磁盘加载并匹配当前 agent 列表 */
 	reloadBindings(): void {
@@ -162,7 +168,7 @@ export class FeishuBridge {
 
 	async start(): Promise<void> {
 		const { appId } = this.botConfig;
-		const plainSecret = getDecryptedBotAppSecret(this.botConfig.id);
+		const plainSecret = this.plainAppSecret ?? getDecryptedBotAppSecret(this.botConfig.id);
 		if (!appId || !plainSecret) throw new Error("请先配置 App ID 和 App Secret");
 
 		this.updateStatus({ status: "connecting" });
@@ -213,8 +219,15 @@ export class FeishuBridge {
 				(agentId, event) => this.handleAgentEvent(agentId, event),
 			);
 			this.loadPersistedBindings();
-			this.updateStatus({ status: "connected", activeBindings: this.chatBindings.size, connectedAt: Date.now(), botOpenId: this.botOpenId ?? undefined });
-			log("[飞书 Bridge] 已连接");
+			this.updateStatus({
+				status: "connected",
+				activeBindings: this.chatBindings.size,
+				connectedAt: Date.now(),
+				botId: this.botConfig.id,
+				botName: this.botConfig.name,
+				botOpenId: this.botOpenId ?? undefined,
+			});
+			log("[Feishu Bridge] connected");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			this.updateStatus({ status: "error", errorMessage: message });
@@ -241,8 +254,8 @@ export class FeishuBridge {
 		this.cardUpdateFailed.clear();
 		for (const [, timer] of this.imageConfirmTimers) { clearTimeout(timer); }
 		this.imageConfirmTimers.clear();
-		this.updateStatus({ status: "disconnected", activeBindings: 0 });
-		log("[飞书 Bridge] 已停止");
+		this.updateStatus({ status: "disconnected", activeBindings: 0, botId: undefined, botName: undefined, botOpenId: undefined });
+		log("[Feishu Bridge] stopped");
 	}
 
 	// ===== 配置热更新 =====
@@ -328,8 +341,14 @@ export class FeishuBridge {
 		const userId = (sender?.sender_id as Record<string, unknown>)?.open_id as string ?? "unknown";
 		const mentions = message.mentions as Array<{ name: string; id: string | { open_id: string; union_id: string; user_id: string } }> | undefined;
 
-		// 记住用户 open_id（用于自动拉群）
-		if (userId && userId !== "unknown") this.userOpenId = userId;
+		// 记住用户 open_id（用于自动拉群），并推回配置页；这样用户发任意消息都能自动回填，不依赖 /whoami 命令成功响应。
+		if (userId && userId !== "unknown") {
+			this.userOpenId = userId;
+			try {
+				const win = this.getWindow();
+				if (win && !win.isDestroyed()) win.webContents.send(ipcChannels.feishuWhoamiResult, userId);
+			} catch { /* ignore */ }
+		}
 
 		if (this.processingChats.has(chatId)) { log(`[飞书 Bridge] 跳过重入消息: ${chatId}`); return; }
 		this.processingChats.add(chatId);
@@ -394,12 +413,18 @@ export class FeishuBridge {
 			}
 			if (!text && imageAttachments.length === 0 && fileAttachments.length === 0) return;
 
+			log(`[Feishu Bridge] message received: chat=${chatId.slice(0, 8)}, type=${messageType}, text=${text.slice(0, 40)}`);
+
 			let groupName: string | undefined; let senderName: string | undefined;
 			if (chatType === "group") { const [gi, un] = await Promise.all([this.getGroupInfo(chatId), this.getUserName(userId)]); groupName = gi?.name; senderName = un; }
 
 			const msgCtx: FeishuMessageContext = { chatId, senderOpenId: userId, senderName, messageId, chatType: chatType as "p2p" | "group", groupName };
 
-			if (text.startsWith("/")) { await this.handleCommand(msgCtx, text); return; }
+			// 添加 Bot 首次获取 open_id 时，用户可能直接发送 whoami；这里兼容无斜杠写法。
+			if (text.startsWith("/") || text.toLowerCase() === "whoami") {
+				await this.handleCommand(msgCtx, text.startsWith("/") ? text : `/${text}`);
+				return;
+			}
 
 			const dedupParts = [chatId, userId, text];
 			if (imageAttachments.length > 0) dedupParts.push("img", ...imageAttachments.map((a) => a.imageKey));
@@ -434,6 +459,13 @@ export class FeishuBridge {
 				await this.sendSmartMessage(chatId,
 					`你的 open_id: \`${userId}\`\n\n📋 你可以将此 ID 填入 PiDeck 飞书配置中的「你的 Open ID」字段，以便新建会话时自动拉你进群。`
 				);
+				// 将 open_id 推回前端，用于添加 Bot 时自动填入
+				try {
+					const win = this.getWindow();
+					if (win && !win.isDestroyed()) {
+						win.webContents.send(ipcChannels.feishuWhoamiResult, userId);
+					}
+				} catch { /* ignore */ }
 				break;
 			case "/refresh": case "/r":
 				this.reloadBindings();
@@ -644,13 +676,12 @@ export class FeishuBridge {
 			}
 		}
 
-		// ==== Session Mirror: Pi 侧会话 → 飞书实时同步 ====
+		// 只有用户显式手动连接过的 PiDeck 会话，才把 Agent 结果同步到飞书。
 		if (!this.feishuSessions.has(agentId) && typed.type === "agent_end") {
-			// 非飞书发起的 session 完成 → 同步结果到飞书
 			const chatId = this.sessionToChat.get(agentId);
 			if (chatId && this.client) {
 				this.syncPiMessageToFeishu(agentId, chatId).catch((e) =>
-					logErr("[飞书 Bridge] 同步 Pi 消息到飞书失败:", e));
+					logErr("[Feishu Bridge] sync Pi message failed:", e));
 			}
 		}
 	}

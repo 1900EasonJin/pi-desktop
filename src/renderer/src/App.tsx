@@ -536,6 +536,14 @@ export function App() {
     });
   }, [activeAgentId]);
 
+  // Bot 列表变更后，若当前会话固定的 Bot 已被删除，则清除本地缓存避免指示器展示已失效的固定状态。
+  useEffect(() => {
+    if (!sessionFeishuBotId) return;
+    if (!feishu.bots.some((bot) => bot.id === sessionFeishuBotId)) {
+      setSessionFeishuBotId(undefined);
+    }
+  }, [feishu.bots, sessionFeishuBotId]);
+
   const activeProject = projects.find(
     (project) => project.id === activeProjectId,
   );

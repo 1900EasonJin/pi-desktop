@@ -27,6 +27,8 @@ type Props = {
 	onUpdateBotConfig: (botId: string, patch: Partial<FeishuBotConfig>) => Promise<FeishuBotConfig | undefined>;
 	onTest: (appId: string, appSecret: string) => Promise<FeishuTestResult>;
 	onRemoveBinding: (chatId: string) => Promise<boolean>;
+	/** 打开外部文档链接 */
+	onOpenExternal?: (url: string) => Promise<void>;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -49,6 +51,7 @@ export function FeishuPanel({
 	onUpdateBotConfig,
 	onTest,
 	onRemoveBinding,
+	onOpenExternal,
 }: Props) {
 	const [showConfig, setShowConfig] = useState(false);
 	const [showBots, setShowBots] = useState(false);
@@ -247,6 +250,7 @@ export function FeishuPanel({
 					}}
 					onTest={onTest}
 					connecting={connecting}
+					onOpenExternal={onOpenExternal}
 				/>
 			)}
 		</div>

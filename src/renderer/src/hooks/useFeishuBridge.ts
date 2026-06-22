@@ -17,6 +17,8 @@ import type {
 
 type PiDesktopFeishuApi = {
 	connect: (input: FeishuConnectInput) => Promise<{ success: boolean; message: string }>;
+	/** 临时连接（不保存配置），返回 botInfo 用于后续保存 */
+	connectTemp: (input: FeishuConnectInput) => Promise<{ success: boolean; message: string; botInfo?: { id: string; name: string } }>;
 	disconnect: () => Promise<{ success: boolean }>;
 	connectByBot: (botId: string) => Promise<{ success: boolean; message: string }>;
 	statusRequest: () => Promise<FeishuBridgeStatus>;
@@ -31,6 +33,8 @@ type PiDesktopFeishuApi = {
 	bindingUpdate: (chatId: string, patch: Partial<FeishuChatBinding>) => Promise<FeishuChatBinding | undefined>;
 	onMessages: (callback: (message: FeishuChatMessage) => void) => () => void;
 	onBindingsChanged: (callback: (bindings: FeishuChatBinding[]) => void) => () => void;
+	onBotsChanged: (callback: (bots: FeishuBotConfig[]) => void) => () => void;
+	onWhoamiResult: (callback: (openId: string) => void) => () => void;
 	sessionBotGet: (agentId: string) => Promise<string | null>;
 	sessionBotSet: (agentId: string, botId: string | null) => Promise<void>;
 };
@@ -66,6 +70,7 @@ export function useFeishuBridge() {
 					api.bindingsList(),
 				]);
 				setStatus(s);
+				setActiveBotId(s.botId);
 				setBots(b);
 				setBindings(bi);
 			} catch (e) {
@@ -77,7 +82,10 @@ export function useFeishuBridge() {
 	// 状态推送订阅
 	useEffect(() => {
 		if (!api) return;
-		return api.onStatus(setStatus);
+		return api.onStatus((nextStatus) => {
+			setStatus(nextStatus);
+			setActiveBotId(nextStatus.botId);
+		});
 	}, [api]);
 
 	// 消息推送订阅
@@ -93,6 +101,25 @@ export function useFeishuBridge() {
 		if (!api) return;
 		return api.onBindingsChanged((bi) => {
 			setBindings(bi);
+		});
+	}, [api]);
+
+	// Bot 配置变更推送：配置页增删改 Bot 后，会话下拉等使用同一 hook 的组件自动同步。
+	useEffect(() => {
+		if (!api) return;
+		return api.onBotsChanged((nextBots) => {
+			setBots(nextBots);
+			setActiveBotId((current) =>
+				current && nextBots.some((b) => b.id === current) ? current : undefined,
+			);
+			setSessionBotMap((current) => {
+				const aliveIds = new Set(nextBots.map((b) => b.id));
+				const next: Record<string, string> = {};
+				for (const [agentId, botId] of Object.entries(current)) {
+					if (aliveIds.has(botId)) next[agentId] = botId;
+				}
+				return next;
+			});
 		});
 	}, [api]);
 
@@ -124,6 +151,22 @@ export function useFeishuBridge() {
 			delete next[agentId];
 			return next;
 		});
+	}, [api]);
+
+	const connectTemp = useCallback(async (input: FeishuConnectInput) => {
+		if (!api) return { success: false, message: "API 未就绪" };
+		setConnecting(true);
+		setError(null);
+		try {
+			const result = await api.connectTemp(input);
+			return result;
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			setError(msg);
+			return { success: false, message: msg };
+		} finally {
+			setConnecting(false);
+		}
 	}, [api]);
 
 	const connect = useCallback(async (input: FeishuConnectInput) => {
@@ -261,6 +304,7 @@ export function useFeishuBridge() {
 		hasConfig,
 		activeBotId,
 		connect,
+		connectTemp,
 		connectByBot,
 		disconnect,
 		addBot,
