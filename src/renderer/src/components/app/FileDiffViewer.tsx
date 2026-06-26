@@ -33,6 +33,8 @@ export function FileDiffViewer(props: {
 	readContent: (path: string) => Promise<string>;
 	/** 从会话消息 meta 中提取的工具执行前原始内容，优先于 Git HEAD。 */
 	originalContent?: string;
+	/** Session-recorded modified content, preferred over disk read for historical sessions. */
+	modifiedContent?: string;
 	/** 读取文件的 Git HEAD 原始内容，供差异模式左侧基准列使用。 */
 	readOriginalContent?: (path: string) => Promise<string>;
 	saveContent?: (path: string, content: string) => Promise<void>;
@@ -78,6 +80,10 @@ export function FileDiffViewer(props: {
 				}
 				// 差异模式优先使用会话缓存原始内容（originalContent），
 				// 没有时降级到 Git HEAD；两者都无则左侧显示空（新增文件）。
+				// 修改后内容优先使用会话记录（modifiedContent），历史会话恢复时磁盘可能已变化。
+				const contentPromise = props.modifiedContent !== undefined
+					? Promise.resolve(props.modifiedContent)
+					: props.readContent(props.filePath);
 				const originalPromise =
 					isDiffMode && props.originalContent
 						? Promise.resolve(props.originalContent)
@@ -85,7 +91,7 @@ export function FileDiffViewer(props: {
 							? props.readOriginalContent(props.filePath).catch(() => "")
 							: Promise.resolve("");
 				const [result, originalResult] = await Promise.all([
-					props.readContent(props.filePath),
+					contentPromise,
 					originalPromise,
 				]);
 				if (!cancelled) {

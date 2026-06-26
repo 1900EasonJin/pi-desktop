@@ -253,6 +253,9 @@ function ExtensionCard(props: {
 					<div className="session-card-title skill-title-row">
 						<strong>{name}</strong>
 						<div className="skill-badges">
+							{extension.builtIn && (
+								<span className="skill-state enabled">{t("common.builtIn")}</span>
+							)}
 							<span className="skill-state enabled">
 								{extension.scope === "project"
 									? t("common.project")
@@ -261,25 +264,29 @@ function ExtensionCard(props: {
 						</div>
 					</div>
 					<small>{extension.source}</small>
-					<small>
-						{t("config.extensionVersions", {
-							current: extension.currentVersion ?? "-",
-							latest: extension.latestVersion ?? "-",
-						})}
-						{extension.hasUpdate ? ` · ${t("config.extensionUpdateAvailable")}` : ""}
-					</small>
+					{!extension.builtIn && (
+						<small>
+							{t("config.extensionVersions", {
+								current: extension.currentVersion ?? "-",
+								latest: extension.latestVersion ?? "-",
+							})}
+							{extension.hasUpdate ? ` · ${t("config.extensionUpdateAvailable")}` : ""}
+						</small>
+					)}
 					{extension.updateError && <small className="setting-status error">{extension.updateError}</small>}
 					{extension.path && <small>{extension.path}</small>}
 				</div>
-				<div className="session-card-actions skill-card-actions">
-					<button
-						className="session-rename-button danger"
-						disabled={props.uninstalling}
-						onClick={() => props.onUninstall(extension)}
-					>
-						{props.uninstalling ? t("config.uninstalling") : t("config.uninstall")}
-					</button>
-				</div>
+				{!extension.builtIn && (
+					<div className="session-card-actions skill-card-actions">
+						<button
+							className="session-rename-button danger"
+							disabled={props.uninstalling}
+							onClick={() => props.onUninstall(extension)}
+						>
+							{props.uninstalling ? t("config.uninstalling") : t("config.uninstall")}
+						</button>
+					</div>
+				)}
 			</div>
 		</article>
 	);

@@ -79,6 +79,8 @@ export type SessionModifiedFile = {
 	changedLines?: number;
 	/** 工具执行前的文件原始内容，用于历史会话恢复时展示差异对比。 */
 	originalContent?: string;
+	/** 工具写入/编辑后的新文件内容，优先于从磁盘实时读取（历史会话恢复时磁盘可能已变化或文件已删除）。 */
+	content?: string;
 };
 
 type DiffFileHandler = (path: string, originalContent?: string) => void;
@@ -541,7 +543,7 @@ export function ModelPicker(props: {
 						sortedProviders.map((provider) => (
 							<div key={provider} className="model-group">
 								<div
-									className={`model-group-header${collapsedGroups.has(provider) && !normalizedSearch ? ' collapsed' : ''}`}
+									className={`model-group-header${collapsedGroups.has(provider) ? ' collapsed' : ''}`}
 									onClick={() => {
 										setCollapsedGroups(prev => {
 											const next = new Set(prev);
@@ -554,7 +556,7 @@ export function ModelPicker(props: {
 									{provider}
 									<span className="model-group-count">{groupedModels[provider].length}</span>
 								</div>
-								{!(collapsedGroups.has(provider) && !normalizedSearch) && groupedModels[provider].map((model) => {
+								{!collapsedGroups.has(provider) && groupedModels[provider].map((model) => {
 									const modelKey = `${model.provider}/${model.id}`;
 									const selected = modelKey === currentModelKey;
 									return (
@@ -929,6 +931,22 @@ function CopyMenu(props: {
 	const [copied, setCopied] = useState<string | null>(null);
 	const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
 	const triggerRef = useRef<HTMLButtonElement | null>(null);
+	const closeTimerRef = useRef<number | null>(null);
+	const clearCloseTimer = () => {
+		if (closeTimerRef.current !== null) {
+			window.clearTimeout(closeTimerRef.current);
+			closeTimerRef.current = null;
+		}
+	};
+	const scheduleClose = () => {
+		// 操作栏由 hover/focus 控制显隐；离开后主动收起菜单，避免下次 hover 时复用旧 open 状态。
+		clearCloseTimer();
+		closeTimerRef.current = window.setTimeout(() => {
+			setOpen(false);
+			closeTimerRef.current = null;
+		}, 180);
+	};
+	useEffect(() => clearCloseTimer, []);
 	const copy = async (kind: "text" | "markdown" | "image") => {
 		try {
 			if (kind === "text") await navigator.clipboard.writeText(props.text);
@@ -942,6 +960,7 @@ function CopyMenu(props: {
 		}
 	};
 	const toggleOpen = () => {
+		clearCloseTimer();
 		const rect = triggerRef.current?.getBoundingClientRect();
 		if (rect) {
 			setMenuStyle({
@@ -953,7 +972,11 @@ function CopyMenu(props: {
 		setOpen((value) => !value);
 	};
 	return (
-		<div className={`copy-menu ${props.className ?? ""}`}>
+		<div
+			className={`copy-menu ${props.className ?? ""}`}
+			onPointerEnter={clearCloseTimer}
+			onPointerLeave={scheduleClose}
+		>
 			<button
 				ref={triggerRef}
 				className="copy-menu-trigger"
@@ -1472,6 +1495,7 @@ export const TurnRow = memo(function TurnRow(props: {
 	);
 
 	const rowRef = useRef<HTMLElement | null>(null);
+	const [collapsed, setCollapsed] = useState(false);
 
 	// 本轮没有任何可渲染内容时不输出空容器
 	const hasContent =
@@ -1483,8 +1507,15 @@ export const TurnRow = memo(function TurnRow(props: {
 	if (!hasContent) return null;
 
 	return (
-		<article ref={rowRef} className="turn-row" data-message-id={run.id}>
-			<div className="turn-row-rail" aria-hidden="true" />
+		<article ref={rowRef} className={`turn-row${collapsed ? " collapsed" : ""}`} data-message-id={run.id}>
+			<button
+				className="turn-row-rail"
+				type="button"
+				onClick={() => setCollapsed((value) => !value)}
+				aria-expanded={!collapsed}
+				aria-label={collapsed ? t("common.expand") : t("common.collapse")}
+				title={collapsed ? t("common.expand") : t("common.collapse")}
+			/>
 			<div className="turn-row-body">
 				<div className="turn-row-meta">
 					<span className="turn-row-agent">pi</span>
@@ -1493,53 +1524,61 @@ export const TurnRow = memo(function TurnRow(props: {
 						<span className="turn-row-duration">{formatDuration(duration)}</span>
 					)}
 				</div>
-				{/* 思考过程：独立思考组在前 */}
-				{props.showThinking &&
-					standaloneThinking.map((g) => (
-						<ThinkingBlock
-							key={g.id}
-							text={g.text}
-							endedAt={g.endedAt}
-							showThinking={props.showThinking}
-						/>
-					))}
-				{/* 工具调用组 */}
-				{toolGroups.map((g) => (
-					<ToolGroupCard key={g.id} group={g} />
-				))}
-				{/* 助手正文 */}
-				{mergedText && (
-					<AssistantText
-						text={mergedText}
-						images={allImages}
-						onPreviewImage={props.onPreviewImage}
-						onOpenExternal={props.onOpenExternal}
-						onOpenFile={props.onOpenFile}
-					/>
-				)}
-				{/* 合并的思考内联展示（仅当没有独立思考组时附在正文后） */}
-				{props.showThinking &&
-					mergedThinking &&
-					standaloneThinking.length === 0 && (
-						<ThinkingBlock
-							text={mergedThinking}
-							endedAt={run.endedAt}
-							showThinking={props.showThinking}
-						/>
-					)}
-				{/* 操作栏：hover/focus 显隐，复制整轮回答 */}
-				{mergedText && (
-					<div className="turn-row-actions">
-						<CopyMenu text={mergedText} markdown={mergedText} targetRef={rowRef} />
+				{collapsed ? (
+					<div className="turn-row-collapsed-summary" aria-hidden="true">
+						{mergedText ? summarizeMessage(mergedText) : t("common.expand")}
 					</div>
-				)}
-				{/* 本轮修改文件摘要 */}
-				{fileSummary && fileSummary.length > 0 && (
-					<SessionFileSummary
-						files={fileSummary}
-						onOpenFile={props.onOpenFile}
-						onDiffFile={props.onDiffFile}
-					/>
+				) : (
+					<>
+						{/* 思考过程：独立思考组在前 */}
+						{props.showThinking &&
+							standaloneThinking.map((g) => (
+								<ThinkingBlock
+									key={g.id}
+									text={g.text}
+									endedAt={g.endedAt}
+									showThinking={props.showThinking}
+								/>
+							))}
+						{/* 工具调用组 */}
+						{toolGroups.map((g) => (
+							<ToolGroupCard key={g.id} group={g} />
+						))}
+						{/* 助手正文 */}
+						{mergedText && (
+							<AssistantText
+								text={mergedText}
+								images={allImages}
+								onPreviewImage={props.onPreviewImage}
+								onOpenExternal={props.onOpenExternal}
+								onOpenFile={props.onOpenFile}
+							/>
+						)}
+						{/* 合并的思考内联展示（仅当没有独立思考组时附在正文后） */}
+						{props.showThinking &&
+							mergedThinking &&
+							standaloneThinking.length === 0 && (
+								<ThinkingBlock
+									text={mergedThinking}
+									endedAt={run.endedAt}
+									showThinking={props.showThinking}
+								/>
+							)}
+						{/* 操作栏：hover/focus 显隐，复制整轮回答 */}
+						{mergedText && (
+							<div className="turn-row-actions">
+								<CopyMenu text={mergedText} markdown={mergedText} targetRef={rowRef} />
+							</div>
+						)}
+						{/* 本轮修改文件摘要 */}
+						{fileSummary && fileSummary.length > 0 && (
+							<SessionFileSummary
+								files={fileSummary}
+								onOpenFile={props.onOpenFile}
+								onDiffFile={props.onDiffFile}
+							/>
+						)}
+					</>
 				)}
 			</div>
 		</article>

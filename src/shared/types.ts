@@ -451,7 +451,10 @@ export type PiExtensionSummary = {
 	id: string;
 	source: string;
 	path?: string;
+	/** 非 npm/git 安装的本地文件扩展，通过文件系统自动发现 */
 	scope: "user" | "project" | "unknown";
+	/** PiDeck 内置扩展，不可卸载 */
+	builtIn?: boolean;
 	currentVersion?: string;
 	latestVersion?: string;
 	hasUpdate?: boolean;

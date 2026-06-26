@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type { AppSettings, PiCliUpdateResult, PiExtensionListResult, PiExtensionSummary, PiUpdateCheckResult } from "../../shared/types";
 import type { PiLocator } from "../pi/PiLocator";
 
@@ -18,15 +19,84 @@ export class ExtensionManager {
 
 	async list(): Promise<PiExtensionListResult> {
 		const raw = await this.runPi(["list", "--no-approve"], 20_000);
-		const extensions = await Promise.all(
+		const piInstalled = await Promise.all(
 			this.parseListOutput(raw).map((extension) => this.enrichExtensionVersion(extension)),
 		);
-		return { extensions, raw };
+
+		// 扫描本地自动发现的扩展（~/.pi/agent/extensions/ 下的 .ts 文件和目录），
+		// pi list 只列出通过 pi install 安装的包，不包含本地文件扩展。
+		const localExtensions = await this.scanLocalExtensions();
+
+		// 合并，已通过 pi 安装的优先保留原条目
+		const installedPaths = new Set(piInstalled.map((ext) => ext.path));
+		const merged = [...piInstalled];
+		for (const local of localExtensions) {
+			if (!local.path || !installedPaths.has(local.path)) {
+				merged.push(local);
+			}
+		}
+
+		return { extensions: merged, raw };
+	}
+
+	/**
+	 * 扫描 ~/.pi/agent/extensions/ 目录，发现未被 pi list 列出的本地扩展。
+	 * 单文件扩展（.ts 文件）和目录扩展（含 index.ts）都会被识别。
+	 */
+	private async scanLocalExtensions(): Promise<PiExtensionSummary[]> {
+		const extensionsDir = join(homedir(), ".pi", "agent", "extensions");
+		const result: PiExtensionSummary[] = [];
+
+		let entries: string[];
+		try {
+			entries = await readdir(extensionsDir);
+		} catch {
+			return result; // 目录不存在时静默跳过
+		}
+
+		for (const entry of entries) {
+			if (entry.startsWith(".") || entry === "node_modules" || entry.endsWith(".d.ts")) continue;
+
+			const fullPath = join(extensionsDir, entry);
+			let name = entry;
+			let source = entry;
+
+			// 处理目录扩展（目录/index.ts）
+			if (entry.endsWith(".ts")) {
+				// 单文件扩展，去掉 .ts 后缀作为显示名
+				name = entry.slice(0, -3);
+				source = entry;
+			} else {
+				// 目录扩展，检查是否有 index.ts
+				try {
+					await readFile(join(fullPath, "index.ts"), "utf-8");
+					name = entry;
+					source = entry;
+				} catch {
+					continue; // 没有 index.ts，跳过
+				}
+			}
+
+			const isBuiltIn = name.startsWith("pi-deck-");
+			result.push({
+				id: `local:${source}`,
+				source,
+				path: extensionsDir,
+				scope: "user",
+				builtIn: isBuiltIn,
+			});
+		}
+
+		return result;
 	}
 
 	async uninstall(source: string, scope: PiExtensionSummary["scope"] = "user"): Promise<void> {
 		const normalized = source.trim();
 		if (!normalized) throw new Error("扩展来源不能为空");
+		// 阻止卸载 PiDeck 内置扩展（如 pi-deck-file-capture）
+		if (source.startsWith("pi-deck-")) {
+			throw new Error("PiDeck 内置扩展不可卸载");
+		}
 		await this.runPi([
 			"remove",
 			normalized,

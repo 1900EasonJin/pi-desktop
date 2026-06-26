@@ -1118,9 +1118,9 @@ export class AgentManager {
 		const isError = status === "error" || event.isError === true;
 		const args = event.args ?? existing?.meta?.args;
 
-		// 工具首次开始执行（status === "running"）且 args 携带文件路径时，
-		// 读取文件原始内容以供差异编辑器使用。读取失败（文件不存在等）静默跳过。
-		// 后续 done/error 状态复用已有的 originalContent，避免重复读取。
+		// 工具首次开始执行时尝试异步读取原始文件内容（pi-deck-file-capture 扩展未安装时的回退方案）。
+		// 当扩展已安装时，后续 tool_execution_end 会从 result.details._piDeckOriginalContent
+		// 同步拿到原始内容，可跳过此处的异步读取。
 		let originalContent: string | undefined = existing?.meta?.originalContent as
 			| string
 			| undefined;
@@ -1140,10 +1140,24 @@ export class AgentManager {
 				readFile(filePath, "utf8")
 					.then((content) => {
 						originalContent = content;
-						existing?.meta && (existing.meta.originalContent = content);
+						// originalContent 是异步补齐的；必须替换 message/meta 和数组引用，
+						// 否则 renderer 的浅比较与 useMemo 会继续使用空快照，diff 左侧就会空白。
+						const currentList = this.messages.get(agentId) ?? [];
+						const nextList = currentList.map((message) =>
+							message.id === messageId
+								? {
+									...message,
+									meta: {
+										...(message.meta ?? {}),
+										originalContent: content,
+									},
+								}
+								: message,
+						);
+						this.messages.set(agentId, nextList);
 						this.emit(ipcChannels.agentsMessage, {
 							agentId,
-							messages: this.messages.get(agentId) ?? [],
+							messages: nextList,
 						});
 					})
 					.catch(() => {
@@ -1156,6 +1170,18 @@ export class AgentManager {
 			event.partialResult ??
 			event.output ??
 			existing?.meta?.result;
+
+		// 优先使用 pi-deck-file-capture 扩展注入的原始内容（在 tool_execution_end 中可用）
+		// 该扩展在工具执行前从磁盘读取原文件，结果存入 details._piDeckOriginalContent，
+		// 无需异步读取，且数据会持久化到 session JSONL 供历史会话恢复。
+		if (
+			!originalContent &&
+			result &&
+			typeof result === "object" &&
+			(result as any).details?._piDeckOriginalContent
+		) {
+			originalContent = (result as any).details._piDeckOriginalContent as string;
+		}
 		const detailText = this.formatToolDetail(
 			toolName,
 			args,
@@ -1315,6 +1341,10 @@ export class AgentManager {
 		rawMessages: unknown[],
 	): ChatMessage[] {
 		const historicalToolCalls = this.collectHistoricalToolCalls(rawMessages);
+		const historicalOriginalContentByPath = this.collectHistoricalOriginalContentByPath(
+			rawMessages,
+			historicalToolCalls,
+		);
 		return rawMessages
 			.flatMap<ChatMessage>((message, index) => {
 				if (!message || typeof message !== "object") return [];
@@ -1356,6 +1386,18 @@ export class AgentManager {
 						content: typed.content,
 						details: typed.details,
 					};
+					const filePath = this.getToolPathFromArgs(historicalCall?.args);
+
+					// 优先使用 pi-deck-file-capture 扩展注入的原始内容
+					// 该数据在工具执行时已写入 details 并持久化到 session JSONL
+					const piDeckOriginalContent = typed.details?._piDeckOriginalContent as
+						| string
+						| undefined;
+					const originalContent =
+						piDeckOriginalContent ??
+						(filePath
+							? historicalOriginalContentByPath.get(filePath)
+							: undefined);
 					const detailText = this.formatToolDetail(
 						toolName,
 						historicalCall?.args,
@@ -1377,6 +1419,9 @@ export class AgentManager {
 								result,
 								isError,
 								detailText,
+								...(originalContent && /write|edit|create|patch/i.test(toolName)
+									? { originalContent }
+									: {}),
 							},
 						},
 					];
@@ -1405,6 +1450,41 @@ export class AgentManager {
 			}
 		}
 		return calls;
+	}
+
+	private collectHistoricalOriginalContentByPath(
+		rawMessages: unknown[],
+		historicalToolCalls: Map<string, { name: string; args: unknown }>,
+	) {
+		const originals = new Map<string, string>();
+		for (const message of rawMessages) {
+			if (!message || typeof message !== "object") continue;
+			const typed = message as any;
+			if (typed.role !== "toolResult") continue;
+			const toolCallId = String(typed.toolCallId ?? "");
+			const historicalCall = historicalToolCalls.get(toolCallId);
+			if (!historicalCall || historicalCall.name !== "read") continue;
+			const filePath = this.getToolPathFromArgs(historicalCall.args);
+			if (!filePath) continue;
+			// 旧历史会话没有保存 originalContent；同一轮写入前通常会先 read 目标文件，
+			// 用最近一次 read 结果作为后续 write/edit/patch 的 diff 基准。
+			const content = this.extractText(typed.content);
+			if (content) originals.set(filePath, content);
+		}
+		return originals;
+	}
+
+	private getToolPathFromArgs(args: unknown) {
+		if (!args || typeof args !== "object") return "";
+		const typed = args as any;
+		return String(
+			typed.path ??
+				typed.filePath ??
+				typed.file ??
+				typed.target_file ??
+				typed.targetFile ??
+				"",
+		);
 	}
 
 	private formatToolDetail(

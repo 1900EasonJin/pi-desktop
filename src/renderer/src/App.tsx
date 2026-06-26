@@ -197,6 +197,17 @@ function getToolFilePath(args: any) {
                       : undefined;
 }
 
+/** Extract new file content from tool args for historical diff display */
+function getToolNewContent(toolName: string, args: any, originalContent?: string): string | undefined {
+  if (!args) return undefined;
+  if (/write|create/i.test(toolName) && typeof args.content === "string") return args.content;
+  if (/edit|patch/i.test(toolName) && typeof args.oldText === "string" && typeof args.newText === "string" && originalContent) {
+    const idx = originalContent.indexOf(args.oldText);
+    if (idx >= 0) return originalContent.slice(0, idx) + args.newText + originalContent.slice(idx + args.oldText.length);
+  }
+  return undefined;
+}
+
 function displayProjectDirectoryName(project: Project) {
   if (isChatProject(project)) return "Chat";
   const normalizedPath = project.path.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -432,6 +443,7 @@ export function App() {
   const [diffViewFile, setDiffViewFile] = useState<string | null>(null);
   const [diffViewMode, setDiffViewMode] = useState<"view" | "diff">("view");
   const [diffViewOriginalContent, setDiffViewOriginalContent] = useState<string>("");
+  const [diffViewModifiedContent, setDiffViewModifiedContent] = useState<string | undefined>(undefined);
   const [codexImportProject, setCodexImportProject] = useState<Project | null>(
     null,
   );
@@ -803,6 +815,7 @@ export function App() {
           getToolChangedLineCount(toolName, args),
         // 同一路径多次修改时保留首次记录的 originalContent，历史会话恢复时优先使用
         originalContent: previous?.originalContent ?? originalContent ?? "",
+        content: getToolNewContent(toolName, args, originalContent) ?? previous?.content,
       });
     }
     return Array.from(byPath.values());
@@ -1903,6 +1916,7 @@ export function App() {
     // 因此优先使用会话级快照；文件边栏不传该值时仍回退到当前会话累计修改记录。
     const modified = modifiedFiles.find((f) => f.path === path);
     setDiffViewOriginalContent(originalContent ?? modified?.originalContent ?? "");
+    setDiffViewModifiedContent(modified?.content ?? undefined);
   }
 
   async function refreshSessionHistory(projectId = sessionsProjectId) {
@@ -4913,6 +4927,7 @@ ${goalTextRef.current}
           filePath={diffViewFile}
           mode={diffViewMode}
           originalContent={diffViewMode === "diff" ? diffViewOriginalContent : undefined}
+          modifiedContent={diffViewModifiedContent}
           onClose={() => { setDiffViewFile(null); setDiffViewMode("view"); }}
           readContent={(path) => api.files.readContent(path)}
           readOriginalContent={(path) => api.git.originalContent(path)}

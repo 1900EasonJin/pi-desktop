@@ -12,7 +12,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { is } from "@electron-toolkit/utils";
 import { PetSystem, type PetSystemDeps } from "./pet";
 // 使用 ?asset 后缀导入图标，electron-vite 会在构建时将其复制到输出目录并提供正确的运行时路径
@@ -1695,6 +1695,13 @@ app.whenReady().then(async () => {
 	);
 
 	await settingsStore.load();
+
+	// 自动部署 pi-deck-file-capture 扩展，用于捕获 edit/write 工具的原始文件内容
+	// 该扩展注入 _piDeckOriginalContent 到工具结果 details，使 diff 展示无需异步读盘
+	await ensurePiDeckExtension("pi-deck-file-capture.ts").catch((error) => {
+		console.error("Failed to install pi-deck extension:", error);
+	});
+
 	await appLogger.info("app", "Application started", {
 		version: app.getVersion(),
 		platform: process.platform,
@@ -1759,6 +1766,36 @@ app.whenReady().then(async () => {
 		}
 	});
 });
+
+/**
+ * 将 PiDeck 内置的 pi 扩展部署到用户扩展目录，使 pi 自动加载。
+ * 仅在目标文件不存在或内容不一致时覆盖写入，避免不必要的磁盘操作。
+ */
+async function ensurePiDeckExtension(extensionName: string): Promise<void> {
+	const homedir = app.getPath("home");
+	const extensionsDir = join(homedir, ".pi", "agent", "extensions");
+	const targetPath = join(extensionsDir, extensionName);
+
+	// 获取源文件路径：开发模式下在 resources/ 目录，打包后通过 process.resourcesPath 访问
+	const sourcePath = is.dev
+		? join(app.getAppPath(), "resources", "extensions", extensionName)
+		: join(process.resourcesPath, "extensions", extensionName);
+
+	// 检查源文件是否存在
+	const sourceContent = await readFile(sourcePath, "utf-8").catch(() => null);
+	if (!sourceContent) {
+		console.warn(`[PiDeck] Extension source not found: ${sourcePath}`);
+		return;
+	}
+
+	// 读取目标文件，只在内容不一致时覆盖（兼顾首次安装和版本更新）
+	const existingContent = await readFile(targetPath, "utf-8").catch(() => null);
+	if (existingContent === sourceContent) return;
+
+	await mkdir(extensionsDir, { recursive: true });
+	await writeFile(targetPath, sourceContent, "utf-8");
+	console.log(`[PiDeck] Installed extension: ${targetPath}`);
+}
 
 app.on("before-quit", () => {
 	isQuitting = true;

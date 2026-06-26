@@ -2457,7 +2457,7 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 /* ---------- 一轮 AI 回答：TurnRow ---------- */
 .turn-row {
 	display: grid;
-	grid-template-columns: 2px minmax(0, 1fr);
+	grid-template-columns: 12px minmax(0, 1fr);
 	gap: 0;
 	margin: 0 0 var(--space-6);
 	width: 100%;
@@ -2465,13 +2465,34 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	min-width: 0;
 }
 .turn-row-rail {
-	width: 2px;
-	background: var(--color-border-subtle);
+	position: relative;
+	width: 12px;
+	border: 0;
+	padding: 0;
 	border-radius: var(--radius-pill);
-	transition: background-color 0.15s ease;
+	background: transparent;
+	cursor: pointer;
 }
-.turn-row:hover .turn-row-rail {
+.turn-row-rail::before {
+	content: "";
+	position: absolute;
+	inset: 0 auto 0 5px;
+	width: 2px;
+	border-radius: var(--radius-pill);
+	background: var(--color-border-subtle);
+	transition: background-color 0.15s ease, transform 0.15s ease;
+}
+.turn-row:hover .turn-row-rail::before,
+.turn-row-rail:hover::before {
 	background: color-mix(in srgb, var(--color-accent) 50%, var(--color-border-subtle));
+}
+.turn-row-rail:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+.turn-row.collapsed .turn-row-rail::before {
+	background: color-mix(in srgb, var(--color-accent) 72%, var(--color-border-subtle));
+	transform: scaleX(1.6);
 }
 .turn-row-body {
 	min-width: 0;
@@ -2503,6 +2524,15 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	font-family: var(--font-family-business);
 	font-size: var(--font-size-micro);
 	color: var(--color-text-tertiary);
+}
+.turn-row-collapsed-summary {
+	max-width: 72ch;
+	overflow: hidden;
+	color: var(--color-text-tertiary);
+	font-size: var(--font-size-caption);
+	line-height: var(--line-height-caption);
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 /* 操作栏：默认隐藏，hover/focus-within 显现；保留 24px 占位避免布局跳动 */
 .turn-row-actions {
