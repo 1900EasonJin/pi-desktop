@@ -556,6 +556,8 @@ export function createPreviewApi(): PiDesktopApi {
 			commands: async () => [
 				{ name: "reload", description: "Reload runtime", source: "builtin" },
 			],
+			editMessage: async () => undefined,
+			deleteMessage: async () => undefined,
 			onState: noop,
 			onFocusTarget: noop,
 			onMessages: ((
