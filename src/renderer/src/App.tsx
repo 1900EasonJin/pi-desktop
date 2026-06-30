@@ -61,6 +61,7 @@ import {
   BranchSelector,
   ComposerToolbar,
   ConversationOutline,
+  DiagnosticMessageCard,
   DrawerContent,
   EmptyState,
   EnvironmentDialog,
@@ -109,6 +110,7 @@ const SettingsModal = lazy(() => import("./components/app/SettingsModal").then((
 const CodexImportModal = lazy(() => import("./components/app/ImportModals").then((m) => ({ default: m.CodexImportModal })));
 const ClaudeImportModal = lazy(() => import("./components/app/ImportModals").then((m) => ({ default: m.ClaudeImportModal })));
 const OpenCodeImportModal = lazy(() => import("./components/app/ImportModals").then((m) => ({ default: m.OpenCodeImportModal })));
+const ProjectResourcesModal = lazy(() => import("./components/app/ProjectResourcesModal").then((m) => ({ default: m.ProjectResourcesModal })));
 const UpdateErrorModalLazy = lazy(() => import("./components/app/UpdateModals").then((m) => ({ default: m.UpdateErrorModal })));
 const UpToDateModalLazy = lazy(() => import("./components/app/UpdateModals").then((m) => ({ default: m.UpToDateModal })));
 import { createDefaultExternalEditorSettings } from "../../shared/types";
@@ -317,10 +319,24 @@ function getEditorLogoUrl(editorId: string) {
   return EDITOR_LOGO_URLS[editorId];
 }
 
-function isReplacementForPendingAgent(agent: AgentTab, pending: AgentTab) {
-  if (!pending.id.startsWith("pending-")) return false;
+type PendingAgentTab = AgentTab & {
+  pendingKind?: "create" | "restart";
+  pendingStartedAt?: number;
+};
+
+function isReplacementForPendingAgent(agent: AgentTab, pending: PendingAgentTab) {
   if (agent.projectId !== pending.projectId || agent.cwd !== pending.cwd)
     return false;
+
+  if (pending.pendingKind === "restart") {
+    const startedAt = pending.pendingStartedAt ?? pending.createdAt;
+    // 重启占位只匹配本次重启之后出现的新进程，避免误选同项目下已有的同名 Agent。
+    if (agent.createdAt < startedAt - 1000) return false;
+    if (isSameSessionPath(agent.sessionPath, pending.sessionPath)) return true;
+    return !pending.sessionPath && agent.title === pending.title;
+  }
+
+  if (!pending.id.startsWith("pending-")) return false;
   if (isSameSessionPath(agent.sessionPath, pending.sessionPath)) return true;
   if (pending.sessionPath && agent.createdAt >= pending.createdAt - 1000)
     return true;
@@ -363,7 +379,7 @@ export function App() {
   const [draggingProjectId, setDraggingProjectId] = useState<string>();
   const [dragOverProjectId, setDragOverProjectId] = useState<string>();
   const [agents, setAgents] = useState<AgentTab[]>([]);
-  const [pendingAgents, setPendingAgents] = useState<AgentTab[]>([]);
+  const [pendingAgents, setPendingAgents] = useState<PendingAgentTab[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string>();
   const [activeAgentId, setActiveAgentId] = useState<string>();
   const activeAgentIdRef = useRef<string | undefined>(activeAgentId);
@@ -413,8 +429,8 @@ export function App() {
   const [promptByAgent, setPromptByAgent] = useState<Record<string, string>>(
     {},
   );
-  /** 当前进行的操作类型,用于按钮 loading 状态 */
-  const [loadingAction, setLoadingAction] = useState<null | "restart">(null);
+  /** 当前正在重启的 Agent，用于仅给对应会话显示 loading，避免切到其他 Agent 后仍被全局禁用。 */
+  const [restartingAgentId, setRestartingAgentId] = useState<string | null>(null);
   const [attachedImagesByAgent, setAttachedImagesByAgent] = useState<
     Record<string, ImageContent[]>
   >({});
@@ -565,6 +581,7 @@ export function App() {
   const [openCodeImportProject, setOpenCodeImportProject] = useState<Project | null>(
     null,
   );
+  const [projectResourcesProject, setProjectResourcesProject] = useState<Project | null>(null);
   const [openCodeImportSessions, setOpenCodeImportSessions] = useState<
     OpenCodeSessionSummary[]
   >([]);
@@ -698,7 +715,7 @@ export function App() {
   const composerTextareaRef = useRef<HTMLDivElement | null>(null);
   // RichInput 受控重渲染后,光标应恢复到的纯文本偏移(供建议选中/清除后恢复选区)。
   const pendingComposerCaretRef = useRef<number | null>(null);
-  const pendingAgentsRef = useRef<AgentTab[]>([]);
+  const pendingAgentsRef = useRef<PendingAgentTab[]>([]);
   const projectDragPreventClickRef = useRef(false);
 
   // ===== 飞书桥接 =====
@@ -1136,16 +1153,10 @@ export function App() {
       setAttachedImagesByAgent((current) =>
         migrateAgentRecord(current, pendingReplacementById, draftIds),
       );
-      // 裁剪已关闭 agent 的消息缓存，释放 renderer 内存
-      setMessagesByAgent((current) => {
-        const liveIds = new Set(nextAgents.map((a) => a.id));
-        const keys = Object.keys(current);
-        const hasStale = keys.some((k) => !liveIds.has(k));
-        if (!hasStale) return current;
-        return Object.fromEntries(
-          Object.entries(current).filter(([k]) => liveIds.has(k)),
-        );
-      });
+      // 裁剪已关闭 agent 的消息缓存，释放 renderer 内存；重启占位需要参与 liveIds，避免旧进程移除时聊天记录闪空。
+      setMessagesByAgent((current) =>
+        migrateAgentRecord(current, pendingReplacementById, draftIds),
+      );
     });
     // 优化:历史会话加载时消息更新频繁,只在消息真正变化时更新 state,避免不必要的重渲染导致输入卡顿
     const offMessages = api.agents.onMessages((payload) =>
@@ -2643,7 +2654,7 @@ export function App() {
       return existing;
     }
     const previousAgentId = activeAgentId;
-    const pendingTab: AgentTab = {
+    const pendingTab: PendingAgentTab = {
       id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       projectId,
       cwd: project.path,
@@ -2814,11 +2825,12 @@ export function App() {
   }
 
   /** 切换模型的收藏状态，收藏的模型在选模型列表中置顶显示 */
-  function toggleFavoriteModel(modelId: string) {
+  function toggleFavoriteModel(provider: string, modelId: string) {
+    const key = `${provider}/${modelId}`;
     const current = settings.favoriteModels ?? [];
-    const next = current.includes(modelId)
-      ? current.filter((id) => id !== modelId)
-      : [...current, modelId];
+    const next = current.includes(key)
+      ? current.filter((id) => id !== key)
+      : [...current, key];
     void updateSettings({ favoriteModels: next });
   }
 
@@ -4260,23 +4272,60 @@ ${goalTextRef.current}
                         <button
                           disabled={
                             activeAgent?.status === "starting" ||
-                            !!loadingAction
+                            restartingAgentId === activeAgentId
                           }
                           onClick={async () => {
-                            if (!activeAgentId) return;
-                            setLoadingAction("restart");
+                            if (!activeAgentId || !activeAgent) return;
+                            const restartingAgent = activeAgent;
+                            setRestartingAgentId(restartingAgent.id);
                             setSessionActionsOpen(false);
+                            // 重启会在主进程中短暂移除旧 Agent；这里保留原位置的 starting 占位，避免自动选中同项目下一个 Agent。
+                            pendingAgentsRef.current = [
+                              ...pendingAgentsRef.current.filter(
+                                (agent) => agent.id !== restartingAgent.id,
+                              ),
+                              {
+                                ...restartingAgent,
+                                status: "starting",
+                                pendingKind: "restart",
+                                pendingStartedAt: Date.now(),
+                              },
+                            ];
+                            setPendingAgents(pendingAgentsRef.current);
                             try {
                               const tab =
-                                await api.agents.restart(activeAgentId);
-                              setActiveAgentId(tab.id);
+                                await api.agents.restart(restartingAgent.id);
+                              pendingAgentsRef.current = pendingAgentsRef.current.filter(
+                                (agent) => agent.id !== restartingAgent.id,
+                              );
+                              setPendingAgents(pendingAgentsRef.current);
+                              setActiveAgentId((current) =>
+                                current === restartingAgent.id ? tab.id : current,
+                              );
+                              setActiveAgentByProject((current) =>
+                                current[restartingAgent.projectId] === restartingAgent.id
+                                  ? { ...current, [restartingAgent.projectId]: tab.id }
+                                  : current,
+                              );
                               void refreshRuntimeState(tab.id);
+                            } catch (error) {
+                              // 重启失败时保留原 Agent 卡片并标记错误，避免用户当前上下文被兜底切走。
+                              pendingAgentsRef.current = pendingAgentsRef.current.map(
+                                (agent) =>
+                                  agent.id === restartingAgent.id
+                                    ? { ...agent, status: "error" }
+                                    : agent,
+                              );
+                              setPendingAgents(pendingAgentsRef.current);
+                              showToast(error instanceof Error ? error.message : String(error), 5000);
                             } finally {
-                              setLoadingAction(null);
+                              setRestartingAgentId((current) =>
+                                current === restartingAgent.id ? null : current,
+                              );
                             }
                           }}
                         >
-                          {loadingAction === "restart"
+                          {restartingAgentId === activeAgentId
                             ? t("app.restarting")
                             : t("app.restart")}
                         </button>
@@ -4439,6 +4488,8 @@ ${goalTextRef.current}
                     validCommandNames={validCommandNames}
                   validFilePaths={validFilePaths}
                   />
+                ) : item.message.role === "error" || item.message.role === "system" ? (
+                  <DiagnosticMessageCard key={item.message.id} message={item.message} />
                 ) : (
                   <Fragment key={item.message.id}>
                     <AssistantText
@@ -4939,6 +4990,10 @@ ${goalTextRef.current}
           onImportCodexSessions={() => openCodexImport(projectMenu.project)}
           onImportClaudeSessions={() => openClaudeImport(projectMenu.project)}
           onImportOpenCodeSessions={() => openOpenCodeImport(projectMenu.project)}
+          onManageProjectResources={() => {
+            setProjectResourcesProject(projectMenu.project);
+            setProjectMenu(null);
+          }}
           onFilterSessions={() => {
             setSessionFilterOpen({
               ...adjustMenuPos(projectMenu.x, projectMenu.y + 20, 180, 250),
@@ -5018,6 +5073,14 @@ ${goalTextRef.current}
             void deleteHistorySession(session);
           }}
         />
+      )}
+      {projectResourcesProject && (
+        <Suspense fallback={null}>
+          <ProjectResourcesModal
+            project={projectResourcesProject}
+            onClose={() => setProjectResourcesProject(null)}
+          />
+        </Suspense>
       )}
       {(agentRenameTarget || sessionRenameTarget) && (
         <div

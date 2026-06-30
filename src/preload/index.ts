@@ -22,6 +22,8 @@ import type {
 	ConfigFileDiagnostic,
 	CreateAgentInput,
 	CreatePiSkillInput,
+	CreateProjectSkillInput,
+	ProjectResourceListResult,
 	PetAggregateState,
 	PetManifest,
 	PetNotification,
@@ -90,6 +92,20 @@ const api = {
 			) as Promise<Project[]>,
 		onChanged: (callback: (projects: Project[]) => void) =>
 			subscribe(ipcChannels.projectsChanged, callback),
+	},
+	projectResources: {
+		list: (projectId: string) =>
+			ipcRenderer.invoke(ipcChannels.projectResourcesList, projectId) as Promise<ProjectResourceListResult>,
+		createSkill: (input: CreateProjectSkillInput) =>
+			ipcRenderer.invoke(ipcChannels.projectResourcesCreateSkill, input) as Promise<PiSkillSummary>,
+		deleteSkill: (projectId: string, skillPath: string) =>
+			ipcRenderer.invoke(ipcChannels.projectResourcesDeleteSkill, projectId, skillPath) as Promise<void>,
+		deleteExtension: (projectId: string, extensionPath: string) =>
+			ipcRenderer.invoke(ipcChannels.projectResourcesDeleteExtension, projectId, extensionPath) as Promise<void>,
+		toggleExtension: (projectId: string, extensionPath: string, enabled: boolean) =>
+			ipcRenderer.invoke(ipcChannels.projectResourcesToggleExtension, projectId, extensionPath, enabled) as Promise<void>,
+		toggleSkill: (projectId: string, skillPath: string, enabled: boolean) =>
+			ipcRenderer.invoke(ipcChannels.projectResourcesToggleSkill, projectId, skillPath, enabled) as Promise<PiSkillSummary>,
 	},
 	files: {
 		list: (projectId: string) =>
@@ -308,6 +324,8 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.extensionsUninstall, source, scope) as Promise<void>,
 		install: (source: string) =>
 			ipcRenderer.invoke(ipcChannels.extensionsInstall, source) as Promise<string>,
+		toggle: (source: string, enabled: boolean) =>
+			ipcRenderer.invoke(ipcChannels.extensionsToggle, source, enabled) as Promise<void>,
 		update: () =>
 			ipcRenderer.invoke(ipcChannels.extensionsUpdate) as Promise<PiCliUpdateResult>,
 	},

@@ -24,6 +24,7 @@ function loadMermaid() {
 	return mermaidModulePromise;
 }
 import {
+	AlertTriangle,
 	Check,
 	ChevronDown,
 	ChevronRight,
@@ -495,10 +496,10 @@ export function ModelPicker(props: {
 	current?: { provider?: string; modelId?: string; modelName?: string };
 	onClose: () => void;
 	onPick: (model: AvailableModel) => void;
-	/** 收藏的模型 ID 列表，收藏的模型单独放在最上方的「★ 收藏」分区 */
+	/** 收藏的模型 ID 列表（格式：provider/modelId），收藏的模型独立置顶显示但仍保留在原供应商分组 */
 	favoriteModels: string[];
 	/** 切换收藏状态 */
-	onToggleFavorite: (modelId: string) => void;
+	onToggleFavorite: (provider: string, modelId: string) => void;
 }) {
 	const [modelPickerSearch, setModelPickerSearch] = useState("");
 	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -524,25 +525,19 @@ export function ModelPicker(props: {
 			)
 		: props.models;
 
-	// 分离收藏模型和其余模型：收藏的单独放到最上方「★ 收藏」分区
-	const favorites: AvailableModel[] = [];
-	const nonFavorites: AvailableModel[] = [];
-	for (const model of filteredModels) {
-		if (favoritesSet.has(model.id)) {
-			favorites.push(model);
-		} else {
-			nonFavorites.push(model);
-		}
-	}
-	// 收藏列表按 供应商/名称 排序
+	// 收藏列表（从全部模型中提取，不移除原供应商分组下的显示）
+	const favorites: AvailableModel[] = filteredModels.filter((model) =>
+		favoritesSet.has(`${model.provider}/${model.id}`),
+	);
 	favorites.sort((a, b) => {
 		const ap = a.provider ?? '';
 		const bp = b.provider ?? '';
 		if (ap !== bp) return ap.localeCompare(bp);
 		return (a.name ?? a.id).localeCompare(b.name ?? b.id);
 	});
-	// 其余模型按供应商分组
-	const groupedModels = nonFavorites.reduce<Record<string, AvailableModel[]>>((groups, model) => {
+
+	// 全量模型按供应商分组（收藏模型也保留在原分组）
+	const groupedModels = filteredModels.reduce<Record<string, AvailableModel[]>>((groups, model) => {
 		const provider = model.provider || 'other';
 		if (!groups[provider]) {
 			groups[provider] = [];
@@ -571,7 +566,7 @@ export function ModelPicker(props: {
 	const renderModelRow = (model: AvailableModel) => {
 		const modelKey = `${model.provider}/${model.id}`;
 		const selected = modelKey === currentModelKey;
-		const favorited = favoritesSet.has(model.id);
+		const favorited = favoritesSet.has(modelKey);
 		return (
 			<button
 				key={modelKey}
@@ -584,7 +579,7 @@ export function ModelPicker(props: {
 					title={favorited ? t("app.modelUnfavorite") : t("app.modelFavorite")}
 					onClick={(e) => {
 						e.stopPropagation();
-						props.onToggleFavorite(model.id);
+						props.onToggleFavorite(model.provider, model.id);
 					}}
 				>
 					<Star size={14} strokeWidth={1.8} fill={favorited ? 'currentColor' : 'none'} />
@@ -1242,15 +1237,29 @@ function toolIcon(toolName: string): ReactNode {
 	return <Wrench size={14} />;
 }
 
+function parseToolArgs(value: unknown): Record<string, unknown> | undefined {
+	if (value && typeof value === "object" && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	if (typeof value !== "string" || !value.trim()) return undefined;
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+			? parsed as Record<string, unknown>
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** 从工具消息 meta 中提取副标题（文件路径或命令），让 trigger 行能体现工具作用对象。
- *  pi 的工具参数放在 meta.args 里（如 read 的 path、bash 的 command、edit 的 filePath），
- *  这里同时兼容历史平铺 meta.path/command/file 的写法。 */
+ *  pi 的工具参数可能是对象，也可能已被主进程截断/序列化为 JSON 字符串；两种格式都要兼容，否则 bash 命令摘要会丢失。 */
 function getToolSubtitle(message: ChatMessage): string {
 	const meta = message.meta;
 	if (!meta) return "";
 	// 优先从 args 取参数（pi 工具事件的标准结构）
-	const args = meta.args as Record<string, unknown> | undefined;
-	if (args && typeof args === "object") {
+	const args = parseToolArgs(meta.args);
+	if (args) {
 		for (const key of ["filePath", "file_path", "path", "file", "command", "pattern", "query"]) {
 			const v = args[key];
 			if (typeof v === "string" && v) return v;
@@ -1346,7 +1355,7 @@ export const ToolCard = memo(function ToolCard(props: {
 		typeof props.message.meta?.durationMs === "number"
 			? props.message.meta.durationMs
 			: undefined;
-	const showDuration = status !== "running" && durationMs !== undefined && durationMs > 100;
+	const showDuration = status !== "running" && durationMs !== undefined;
 	// 模型用 read 工具读取 SKILL.md 来加载 skill：识别后以 skill 徽标样式渲染，
 	// 让用户看到模型主动调用了哪个 skill（区别于普通文件读取）
 	const skillName = getReadSkillName(props.message);
@@ -1384,11 +1393,6 @@ export const ToolCard = memo(function ToolCard(props: {
 				{!isSkillRead && kindLabel && (
 					<span className="tool-card-kind">{kindLabel}</span>
 				)}
-				{subtitle && (
-					<span className="tool-card-subtitle" title={subtitle}>
-						{subtitle}
-					</span>
-				)}
 				<span className="tool-card-status">
 					{status === "running" && <span className="tool-card-spinner" aria-hidden="true" />}
 					{statusLabel}
@@ -1396,6 +1400,11 @@ export const ToolCard = memo(function ToolCard(props: {
 				{showDuration && (
 					<span className="tool-card-duration" title={t("tool.durationTitle")}>
 						{formatDuration(durationMs)}
+					</span>
+				)}
+				{subtitle && (
+					<span className="tool-card-subtitle" title={subtitle}>
+						{subtitle}
 					</span>
 				)}
 				<ChevronDown
@@ -1431,6 +1440,39 @@ export const ToolGroupCard = memo(function ToolGroupCard(props: {
 				))}
 			</div>
 		</section>
+	);
+});
+
+function getDiagnosticTone(message: ChatMessage): "error" | "warning" | "success" | "info" {
+	if (message.role === "error") return "error";
+	const status = String(message.meta?.status ?? "");
+	if (status === "error") return "error";
+	if (status === "running") return "warning";
+	if (status === "success") return "success";
+	return "info";
+}
+
+/** 错误/RPC/系统诊断消息使用独立卡片，避免和普通 AI 正文混在一起难以扫读。 */
+export const DiagnosticMessageCard = memo(function DiagnosticMessageCard(props: {
+	message: ChatMessage;
+}) {
+	const tone = getDiagnosticTone(props.message);
+	const title = props.message.role === "error"
+		? t("diagnostic.errorTitle")
+		: t("diagnostic.systemTitle");
+	return (
+		<article
+			className={`diagnostic-card tone-${tone}`}
+			data-message-id={props.message.id}
+			data-role={props.message.role}
+		>
+			<div className="diagnostic-card-header">
+				<AlertTriangle size={14} aria-hidden="true" />
+				<span>{title}</span>
+				<time>{formatTime(props.message.timestamp)}</time>
+			</div>
+			<pre className="diagnostic-card-body">{stripAnsi(props.message.text)}</pre>
+		</article>
 	);
 });
 
@@ -3588,6 +3630,7 @@ export function ProjectContextMenu(props: {
 	onImportCodexSessions: () => void;
 	onImportClaudeSessions: () => void;
 	onImportOpenCodeSessions: () => void;
+	onManageProjectResources: () => void;
 	onFilterSessions: () => void;
 	onRemoveProject: () => void;
 }) {
@@ -3608,6 +3651,8 @@ export function ProjectContextMenu(props: {
 				<button onClick={props.onImportOpenCodeSessions}>
 					{t("menu.importOpenCode")}
 				</button>
+				<hr className="context-separator" />
+				<button onClick={props.onManageProjectResources}>{t("menu.projectResources")}</button>
 				<hr className="context-separator" />
 				<button onClick={props.onFilterSessions}>{t("menu.filterSessions")}</button>
 				<hr className="context-separator" />

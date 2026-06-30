@@ -429,7 +429,7 @@ export type ConfigFileReadResult<T> = {
 };
 
 export type PiSkillLocation = {
-	id: "pi-global" | "agents-global";
+	id: "pi-global" | "agents-global" | "project-pi" | "project-agents";
 	label: string;
 	path: string;
 	rootMarkdownEnabled: boolean;
@@ -460,7 +460,18 @@ export type CreatePiSkillInput = {
 	locationId: PiSkillLocation["id"];
 };
 
-export type PiExtensionSummary = {
+export type ProjectResourceListResult = {
+	skills: PiSkillSummary[];
+	extensions: PiExtensionSummary[];
+};
+
+export type CreateProjectSkillInput = {
+	projectId: string;
+	name: string;
+	description: string;
+};
+
+	export type PiExtensionSummary = {
 	id: string;
 	source: string;
 	path?: string;
@@ -468,6 +479,8 @@ export type PiExtensionSummary = {
 	scope: "user" | "project" | "unknown";
 	/** PiDeck 内置扩展，不可卸载 */
 	builtIn?: boolean;
+	/** 是否启用（未在 disabledExtensions 列表中） */
+	enabled?: boolean;
 	currentVersion?: string;
 	latestVersion?: string;
 	hasUpdate?: boolean;

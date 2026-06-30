@@ -59,6 +59,65 @@ export function SettingsTab(props: {
 	// enabledModels 已配置时合并到 entries 前端展示，未配置时通过「添加」按钮单独显示
 	const hasEnabledModels = "enabledModels" in data;
 
+	/**
+	 * 设置页只暴露外层重试次数和基础延迟。
+	 * provider 级 timeout/maxRetries 的单位和 SDK 语义容易误解，写入后可能导致立即超时或长时间重试卡住。
+	 */
+	const retryConfig = {
+		maxRetries: (data as any).retry?.maxRetries ?? 10,
+		baseDelayMs: (data as any).retry?.baseDelayMs ?? 5000,
+	};
+
+	// 首次进入设置页时清理旧版 UI 写入的 provider/enable 等字段，保证后续保存只留下安全的两个参数。
+	const retryInitializedRef = useRef(false);
+	useEffect(() => {
+		if (retryInitializedRef.current) return;
+		const existingRetry = (data as any).retry;
+		if (!existingRetry || Object.keys(existingRetry).some((key) => !(key in retryConfig))) {
+			props.onChange({ ...data, retry: retryConfig });
+		}
+		retryInitializedRef.current = true;
+	}, []);
+
+	const updateRetry = (patch: Record<string, unknown>) => {
+		props.onChange({
+			...data,
+			retry: { ...retryConfig, ...patch },
+		});
+	};
+
+	/** 配置键名 → 显示标签（未映射的键名回退显示原始 key） */
+	const configLabel = (key: string): string => {
+		switch (key) {
+			case "enabledModels": return t("config.label.enabledModels");
+			case "defaultProvider": return t("config.label.defaultProvider");
+			case "defaultModel": return t("config.label.defaultModel");
+			case "lastChangelogVersion": return t("config.label.lastChangelogVersion");
+			case "customPrompt": return t("config.label.customPrompt");
+			case "promptGuidelines": return t("config.label.promptGuidelines");
+			case "appendSystemPrompt": return t("config.label.appendSystemPrompt");
+			case "proxy": return t("config.label.proxy");
+			case "proxyUrl": return t("config.label.proxyUrl");
+			case "proxyBypass": return t("config.label.proxyBypass");
+			case "theme": return t("config.label.theme");
+			case "language": return t("config.label.language");
+			case "disabledSkills": return t("config.label.disabledSkills");
+			case "disabledExtensions": return t("config.label.disabledExtensions");
+			case "noProjectDiscovery": return t("config.label.noProjectDiscovery");
+			case "defaultProjectTrust": return t("config.label.defaultProjectTrust");
+			case "allowProjectChanges": return t("config.label.allowProjectChanges");
+			case "enableSkillCommands": return t("config.label.enableSkillCommands");
+			case "temperature": return t("config.label.temperature");
+			case "systemPrompt": return t("config.label.systemPrompt");
+			case "hideThinkingBlock": return t("config.label.hideThinkingBlock");
+			case "packages": return t("config.label.packages");
+			case "defaultThinkingLevel": return t("config.label.defaultThinkingLevel");
+			case "quietStartup": return t("config.label.quietStartup");
+			case "collapseChangelog": return t("config.label.collapseChangelog");
+			default: return key;
+		}
+	};
+
 	return (
 		<div className="config-settings-tab">
 			<div className="config-toolbar">
@@ -76,7 +135,7 @@ export function SettingsTab(props: {
 			<div className="config-settings-list">
 				{/* enabledModels 始终显示在最前面 */}
 				<div className="config-settings-row">
-					<span className="config-settings-key">enabledModels</span>
+					<span className="config-settings-key">{configLabel("enabledModels")}</span>
 					<EnabledModelsInput
 						value={
 							Array.isArray(data.enabledModels) ? data.enabledModels : undefined
@@ -85,11 +144,28 @@ export function SettingsTab(props: {
 						onChange={(v) => props.onChange({ ...data, enabledModels: v })}
 					/>
 				</div>
+
+				{/* ── 重试配置 ── */}
+				<div className="config-retry-group">
+					<div className="config-settings-row config-retry-header-row">
+					<span className="config-settings-section-title">{t("config.retry.title")}</span>
+					<span className="config-settings-section-hint">{t("config.retry.hint")}</span>
+				</div>
+				<div className="config-settings-row">
+					<span className="config-settings-key">{t("config.retry.maxRetries")}</span>
+					<input className="config-settings-input" type="number" min={0} max={50} value={retryConfig.maxRetries} onChange={(e) => updateRetry({ maxRetries: Number(e.target.value) })} />
+				</div>
+				<div className="config-settings-row">
+					<span className="config-settings-key">{t("config.retry.baseDelayMs")}</span>
+					<input className="config-settings-input" type="number" min={100} step={100} value={retryConfig.baseDelayMs} onChange={(e) => updateRetry({ baseDelayMs: Number(e.target.value) })} />
+				</div>
+				</div>
+
 				{entries
-					.filter(([key]) => key !== "enabledModels")
+					.filter(([key]) => key !== "enabledModels" && key !== "retry")
 					.map(([key, value]) => (
 					<div key={key} className="config-settings-row">
-						<span className="config-settings-key">{key}</span>
+						<span className="config-settings-key">{configLabel(key)}</span>
 						<SettingsValueInput
 							value={value}
 							fieldKey={key}
@@ -436,7 +512,7 @@ function SettingsValueInput(props: {
 					checked={value}
 					onChange={(e) => props.onChange(e.target.checked)}
 				/>
-				<span>{value ? "true" : "false"}</span>
+				<span>{value ? t("common.true") : t("common.false")}</span>
 			</label>
 		);
 	}
