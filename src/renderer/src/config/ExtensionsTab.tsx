@@ -85,7 +85,7 @@ export function ExtensionsTab(props: {
 		setTogglingSource(extension.source);
 		try {
 			const nextEnabled = extension.enabled !== false ? false : true;
-			await api.toggle(extension.source, nextEnabled);
+			await getExtensionsApi().toggle(extension.source, nextEnabled);
 			props.onRefresh();
 		} catch (e) {
 			alert(t("config.installFailed") + ": " + (e instanceof Error ? e.message : String(e)));
