@@ -66,6 +66,14 @@ export type AgentResult = {
 };
 
 /** Lark SDK 类型（延迟加载，用于 WSClient + EventDispatcher 模式） */
+export type FeishuCardActionEvent = {
+	messageId: string;
+	chatId: string;
+	operator: { openId: string; userId?: string; name?: string };
+	action: { value: unknown; tag: string; name?: string; option?: string };
+	raw?: unknown;
+};
+
 export type LarkSDK = {
 	Client: new (opts: Record<string, unknown>) => LarkClient;
 	WSClient: new (opts: Record<string, unknown>) => {
@@ -75,6 +83,7 @@ export type LarkSDK = {
 	EventDispatcher: new (opts: Record<string, unknown>) => {
 		register: (handlers: Record<string, (data: unknown) => Promise<unknown | undefined | void>>) => unknown;
 	};
+	normalizeCardAction: (event: Record<string, unknown>, opts?: { includeRaw?: boolean }) => FeishuCardActionEvent | null;
 	Domain: { Feishu: unknown };
 	LoggerLevel: { error: unknown };
 	AppType: { SelfBuild: unknown };
@@ -95,6 +104,9 @@ export type LarkClient = {
 		messageResource: {
 			get: (opts: Record<string, unknown>) => Record<string, unknown>;
 		};
+		file?: {
+			create: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
+		};
 		chat: {
 			get: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
 			create: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
@@ -108,6 +120,14 @@ export type LarkClient = {
 				patch: (opts: Record<string, unknown>) => Promise<Record<string, unknown>>;
 			};
 		};
+	};
+	docx?: {
+		document: {
+			create: (opts?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+		};
+	};
+	drive?: {
+		file?: Record<string, unknown>;
 	};
 	auth: {
 		tenantAccessToken: {
