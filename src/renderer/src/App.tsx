@@ -228,6 +228,19 @@ function isChatProject(project?: Project) {
   return project?.kind === "chat";
 }
 
+function getSelectableCodexImportPaths(sessions: CodexSessionSummary[]) {
+  return sessions
+    .filter((session) => session.threadSource !== "subagent")
+    .map((session) => session.sourcePath);
+}
+
+function formatCodexSubagentName(session: SessionSummary) {
+  const label = [session.codexAgentNickname, session.codexAgentRole]
+    .filter(Boolean)
+    .join(" · ");
+  return label || session.name || "Codex subagent";
+}
+
 function isAbsoluteFilePath(path: string) {
   return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("/");
 }
@@ -501,6 +514,8 @@ export function App() {
   const [sessionSourceFilter, setSessionSourceFilter] = useState<
   	Record<string, Set<"pi" | "codex" | "claude" | "opencode"> | null>
   >(() => loadSessionSourceFilter());
+  const [expandedCodexSubagentGroups, setExpandedCodexSubagentGroups] =
+    useState<Set<string>>(() => new Set());
   /** 来源过滤弹窗（关联项目ID和位置） */
   const [sessionFilterOpen, setSessionFilterOpen] = useState<{
   	x: number;
@@ -2237,8 +2252,7 @@ export function App() {
     try {
       const next = await api.codexSessions.scan(project.id);
       setCodexImportSessions(next);
-      // 默认不自动勾选任何会话,避免用户未确认时批量覆盖已导入历史。
-      setCodexImportSelected([]);
+      setCodexImportSelected(getSelectableCodexImportPaths(next));
     } catch (error) {
       showToast(
         t("codex.scanFailed", {
@@ -2260,7 +2274,7 @@ export function App() {
   }
 
   function toggleAllCodexSessions() {
-    const allPaths = codexImportSessions.map((session) => session.sourcePath);
+    const allPaths = getSelectableCodexImportPaths(codexImportSessions);
     setCodexImportSelected((current) =>
       allPaths.length > 0 && allPaths.every((path) => current.includes(path))
         ? []
@@ -4024,12 +4038,67 @@ ${goalTextRef.current}
                 </button>
                 {!isCollapsed &&
                   projectDisplay.visibleChildren.map((child) => {
+                    const subagentGroupKey = `${project.id}:${child.key}`;
+                    const subagentsExpanded = expandedCodexSubagentGroups.has(subagentGroupKey);
+                    const renderCodexSubagents = (subagents: SessionSummary[]) => {
+                      if (subagents.length === 0) return null;
+                      return (
+                        <div className="codex-subagent-sidebar-group">
+                          <button
+                            type="button"
+                            className="codex-subagent-sidebar-toggle"
+                            onClick={() => {
+                              setExpandedCodexSubagentGroups((current) => {
+                                const next = new Set(current);
+                                if (next.has(subagentGroupKey)) next.delete(subagentGroupKey);
+                                else next.add(subagentGroupKey);
+                                return next;
+                              });
+                            }}
+                          >
+                            <ChevronDown
+                              size={12}
+                              className={subagentsExpanded ? "expanded" : ""}
+                            />
+                            {t("app.codexSubagentCount", { count: subagents.length })}
+                          </button>
+                          {subagentsExpanded &&
+                            subagents.map((subagent) => (
+                              <button
+                                key={subagent.filePath}
+                                className="conversation agent-row session-row codex-subagent-sidebar-row"
+                                title={subagent.filePath}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  setSessionMenu({
+                                    ...adjustMenuPos(event.clientX, event.clientY, 200, 280),
+                                    projectId: project.id,
+                                    session: subagent,
+                                  });
+                                }}
+                                onClick={() =>
+                                  void openSidebarSession(project.id, subagent)
+                                }
+                              >
+                                <div className="conversation-body">
+                                  <div className="conversation-title">
+                                    <strong>{formatCodexSubagentName(subagent)}</strong>
+                                    <span className="session-source-badge codex subagent">
+                                      {t("app.codexSubagent")}
+                                    </span>
+                                  </div>
+                                </div>
+                              </button>
+                            ))}
+                        </div>
+                      );
+                    };
                     if (child.type === "agent") {
                       const agent = child.agent;
                       const isActiveAgent = agent.id === activeAgentId;
                       return (
+                        <Fragment key={child.key}>
                         <button
-                          key={child.key}
                           className={
                             isActiveAgent
                               ? "conversation agent-row active"
@@ -4075,13 +4144,15 @@ ${goalTextRef.current}
                             </div>
                           </div>
                         </button>
+                        {renderCodexSubagents(child.codexSubagents)}
+                        </Fragment>
                       );
                     }
 
                     const session = child.session;
                     return (
+                      <Fragment key={child.key}>
                       <button
-                        key={child.key}
                         className="conversation agent-row session-row"
                         title={session.filePath}
                         onContextMenu={(event) => {
@@ -4113,6 +4184,8 @@ ${goalTextRef.current}
                           </div>
                         </div>
                       </button>
+                      {renderCodexSubagents(child.codexSubagents)}
+                      </Fragment>
                     );
                   })}
                 {!isCollapsed && projectSessionsLoading && (
