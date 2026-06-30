@@ -26,6 +26,7 @@ import type {
 	FeishuImageAttachment,
 	FeishuFileAttachment,
 	FeishuMessageContext,
+	FeishuCardActionEvent,
 	LarkSDK,
 	LarkClient,
 } from "./types";
@@ -47,6 +48,7 @@ import { buildFeishuTextChildren, stripFeishuActionMarkers, wantsFeishuDoc } fro
 import { hasExplicitFeishuFileSendIntent } from "./fileIntent";
 import { createInitialState, reduceFromPiEvent, markInterrupted, markError, markDone, type RunState } from "./CardRunState";
 import { renderRunCard } from "./CardRenderer";
+import { buildModelPickerCard, parseModelActionValue } from "./ModelPickerCard";
 import type { AgentManager } from "../pi/AgentManager";
 
 // ===== 常量 =====
@@ -236,6 +238,10 @@ export class FeishuBridge {
 				"im.message.receive_v1": async (data: unknown) => {
 					await this.handleRawMessage(data as Record<string, unknown>).catch((err) =>
 						logErr("[飞书 Bridge] handleRawMessage 异常:", err));
+				},
+				"card.action.trigger": async (data: unknown) => {
+					const event = lark.normalizeCardAction(data as Record<string, unknown>, { includeRaw: true });
+					if (event) await this.handleCardAction(event);
 				},
 				"im.message.reaction.created_v1": async () => {},
 				"im.chat.member.bot.added_v1": async () => {},
@@ -1212,24 +1218,7 @@ export class FeishuBridge {
 		if (!models.length) { await this.sendSmartMessage(ctx.chatId, "没有可用模型。请先在 PiDeck 中配置模型。"); return; }
 		const state = await this.agentManager.getRuntimeState(binding.sessionId).catch(() => undefined);
 		const current = state ? `${state.provider}/${state.modelId}` : "无";
-		const byProvider = new Map<string, AvailableModel[]>();
-		for (const m of models) {
-			if (!byProvider.has(m.provider)) byProvider.set(m.provider, []);
-			const list = byProvider.get(m.provider)!;
-			if (list.length < 8) list.push(m);
-		}
-		const lines: string[] = [`当前模型: ${current}`, "", "**可用模型：**", ""];
-		for (const [provider, ms] of byProvider) {
-			lines.push(`**${provider}**`);
-			for (const m of ms) {
-				const mark = current === `${provider}/${m.id}` ? " ✓" : "";
-				lines.push(`${m.name || m.id}${mark}`);
-				lines.push("```");
-				lines.push(`/model ${provider}/${m.id}`);
-				lines.push("```");
-			}
-		}
-		await this.sendSmartMessage(ctx.chatId, lines.join("\n"));
+		await this.sendCardMessage(ctx.chatId, buildModelPickerCard({ current, models }));
 	}
 
 	private async handleWorkspaceCommand(ctx: FeishuMessageContext, text: string): Promise<void> {
@@ -1280,9 +1269,25 @@ export class FeishuBridge {
 		await this.sendSmartMessage(ctx.chatId, lines.join("\n"));
 	}
 
-	// ===== 卡片交互回调（飞书 cardAction 不走 WS 连接，留空占位） =====
+	// ===== 卡片交互回调 =====
 
-	private async handleCardAction(_data: Record<string, unknown>): Promise<void> {}
+	private async handleCardAction(event: FeishuCardActionEvent): Promise<void> {
+		const action = parseModelActionValue(event.action.value);
+		if (!action) return;
+		const binding = this.chatBindings.get(event.chatId);
+		if (!binding) { await this.sendSmartMessage(event.chatId, "当前没有绑定的会话。"); return; }
+		const models = await this.agentManager.getAvailableModels(binding.sessionId).catch(() => [] as AvailableModel[]);
+		if (!models.some((m) => m.provider === action.provider && m.id === action.modelId)) {
+			await this.sendSmartMessage(event.chatId, `❌ 模型不可用: ${action.provider}/${action.modelId}`);
+			return;
+		}
+		try {
+			await this.agentManager.setModel(binding.sessionId, action.provider, action.modelId);
+			await this.sendSmartMessage(event.chatId, `✅ 已切换模型为: ${action.provider}/${action.modelId}`);
+		} catch (e) {
+			await this.sendSmartMessage(event.chatId, `❌ 切换失败: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
 
 	// ===== 共享逻辑 =====
 
@@ -1363,7 +1368,7 @@ export class FeishuBridge {
 		await this.sendCardMessage(chatId, {
 			config: { wide_screen_mode: true, update_multi: true },
 			header: { title: { tag: "plain_text", content: "🤖 Pi Agent 帮助" }, template: "green" },
-			elements: [{ tag: "markdown", content: ["**可用命令**", "", "`/new` 或 `/n` — 创建新会话", "`/stop` 或 `/s` — 停止当前 Agent", "`/model` — 列出模型；复制代码块切换", "`/status` — 查看当前状态", "`/whoami` — 查看你的 open_id", "`/help` 或 `/h` — 查看帮助", "", "**Agent 自主能力**", "让 Agent 帮你导出文件或写报告时，它会自动：", "• 发送文件到飞书聊天", "• 创建飞书文档并分享链接", ""].join("\n") }],
+			elements: [{ tag: "markdown", content: ["**可用命令**", "", "`/new` 或 `/n` — 创建新会话", "`/stop` 或 `/s` — 停止当前 Agent", "`/model` — 打开模型切换按钮卡片", "`/status` — 查看当前状态", "`/whoami` — 查看你的 open_id", "`/help` 或 `/h` — 查看帮助", "", "**Agent 自主能力**", "让 Agent 帮你导出文件或写报告时，它会自动：", "• 发送文件到飞书聊天", "• 创建飞书文档并分享链接", ""].join("\n") }],
 		});
 	}
 

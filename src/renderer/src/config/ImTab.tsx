@@ -76,6 +76,10 @@ const EVENTS_JSON = `[
   "minutes.minute.generated_v1"
 ]`;
 
+const CALLBACKS_JSON = `[
+  "card.action.trigger"
+]`;
+
 type FeishuApiRaw = {
 	botsList?: () => Promise<FeishuBotConfig[]>;
 	statusRequest?: () => Promise<FeishuBridgeStatus>;
@@ -121,6 +125,7 @@ export function ImTab(_props: Props) {
 	const [guideOpen, setGuideOpen] = useState(false);
 	const [copiedScope, setCopiedScope] = useState(false);
 	const [copiedEvents, setCopiedEvents] = useState(false);
+	const [copiedCallbacks, setCopiedCallbacks] = useState(false);
 	const [copiedCredential, setCopiedCredential] = useState<string | null>(null);
 	const [revealedSecrets, setRevealedSecrets] = useState<Record<string, string>>({});
 	const [guideAnimating, setGuideAnimating] = useState(false);
@@ -712,6 +717,13 @@ export function ImTab(_props: Props) {
 							<pre className="config-im-code-block">{EVENTS_JSON}</pre>
 							<button className="config-btn small" onClick={() => { navigator.clipboard.writeText(EVENTS_JSON); setCopiedEvents(true); setTimeout(() => setCopiedEvents(false), 2000); }}>
 								{copiedEvents ? t("common.copied") : t("common.copy")}
+							</button>
+
+							<p style={{ marginTop: 20, fontWeight: 600 }}>{t("config.im.guideCallbacksTitle")}</p>
+							<p style={{ fontSize: "var(--font-size-micro)", color: "var(--color-text-tertiary)" }}>{t("config.im.guideCallbacksDesc")}</p>
+							<pre className="config-im-code-block">{CALLBACKS_JSON}</pre>
+							<button className="config-btn small" onClick={() => { navigator.clipboard.writeText(CALLBACKS_JSON); setCopiedCallbacks(true); setTimeout(() => setCopiedCallbacks(false), 2000); }}>
+								{copiedCallbacks ? t("common.copied") : t("common.copy")}
 							</button>
 						</div>
 					</div>

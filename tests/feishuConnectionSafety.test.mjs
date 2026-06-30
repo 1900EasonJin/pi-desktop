@@ -60,6 +60,16 @@ test("Feishu-origin messages also tell the agent to use SEND_FILE markers", () =
 	assert.doesNotMatch(method, /chat_id 是什么/);
 });
 
+test("FeishuBridge registers and handles Feishu model picker card actions", () => {
+	const source = bridgeSource();
+	const method = source.match(/private async handleCardAction\([\s\S]*?\n\t\}/)?.[0] ?? "";
+	assert.match(source, /"card\.action\.trigger"/);
+	assert.match(source, /this\.handleCardAction/);
+	assert.match(method, /parseModelActionValue/);
+	assert.match(method, /this\.agentManager\.getAvailableModels\(binding\.sessionId\)/);
+	assert.match(method, /this\.agentManager\.setModel\(binding\.sessionId, action\.provider, action\.modelId\)/);
+});
+
 test("FeishuBridge prefers the current sessionToChat mapping over stale mirror bindings", () => {
 	const source = bridgeSource();
 	const method = source.match(/private getBestChatId\(agentId: string\): string \| undefined \{[\s\S]*?\n\t\}/)?.[0] ?? "";
