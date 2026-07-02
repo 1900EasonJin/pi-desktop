@@ -693,6 +693,15 @@ export type FeishuChatBinding = {
 	createdAt: number;
 };
 
+/** 草稿元信息，对应 drafts 目录中的单个 .md 文件 */
+export type DraftMeta = {
+	id: string;
+	name: string;
+	path: string;
+	createdAt: number;
+	updatedAt: number;
+};
+
 export type ScratchPadData = {
 	content: string;
 	lastEditedAt: number;
@@ -725,3 +734,6 @@ export type FeishuTestResult = {
 	message: string;
 	botName?: string;
 };
+
+/** 输入框发送模式，决定消息直接执行还是以只读方式触发生成计划。 */
+export type ComposerAgentMode = "normal" | "plan";

@@ -56,6 +56,12 @@ export class AgentManager {
 	/** 开启了 RPC 日志记录的 agent id 集合 */
 	private readonly rpcLoggingAgents = new Set<string>();
 
+	/**
+	 * 待处理的 Extension UI 请求。key 为 agentId，value 为 Map<requestId, { method, title, options }>。
+	 * 用于在 abor t时及时发送 cancellation 防止 pi 等待超时。
+	 */
+	private readonly pendingUIRequests = new Map<string, Map<string, { method: string; title: string }>>();
+
 	constructor(
 		private readonly getProject: (id: string) => Project | undefined,
 		private readonly getWindow: () => BrowserWindow | null,
@@ -221,18 +227,7 @@ export class AgentManager {
 				sessionPath: input.sessionPath,
 			});
 		}
-		// 新建 Agent 和历史会话恢复都走此入口；启动前落盘 trust.json，确保项目级 AGENTS.md/扩展不仅本次 --approve 生效，
-		// 也能出现在 Trust 设置页并在后续会话中自动加载。
-		void this.appLogger?.info("agent", "Agent ensure trusted directory start", {
-			agentId: id,
-			projectPath: project.path,
-		});
-		await this.configManager.ensureTrustedDirectory(project.path);
-		void this.appLogger?.info("agent", "Agent ensure trusted directory completed", {
-			agentId: id,
-			projectPath: project.path,
-		});
-
+		// 信任确认由内置 pi-deck-project-trust 扩展处理：首次进入未信任项目时弹窗让用户选择信任策略。
 		// 代理环境变量只能在子进程启动前注入；设置变更后通过 restart/new agent 创建新的进程快照。
 		// 每个 Agent 独立启动 pi RPC，避免复用进程时 session、事件监听和配置快照串线。
 		const process = new PiProcess(project.path, this.settingsStore.get());
@@ -640,6 +635,13 @@ export class AgentManager {
 
 	async abort(agentId: string) {
 		const runtime = this.requireRuntime(agentId);
+		// 先取消所有 pending UI 请求，防止 pi 等待 extension_ui_response 导致 abort 超时
+		const pending = this.pendingUIRequests.get(agentId);
+		if (pending && pending.size > 0) {
+			for (const [reqId, _req] of pending) {
+				this.sendUIResponse(agentId, reqId, { cancelled: true });
+			}
+		}
 		// pi RPC 原生支持 abort，对应终端里的 Escape：停止当前 LLM/tool 流程并保留会话进程。
 		await runtime.process.client
 			.request({ type: "abort" }, 10_000)
@@ -1387,6 +1389,10 @@ export class AgentManager {
 			this.upsertToolMessage(agentId, typed, "running");
 		}
 
+		if (typed.type === "extension_ui_request") {
+			this.handleUIRequest(agentId, typed);
+		}
+
 		if (typed.type === "extension_error") {
 			this.addMessage(
 				agentId,
@@ -1394,6 +1400,108 @@ export class AgentManager {
 				String(typed.error ?? "Extension error"),
 			);
 		}
+	}
+
+	/**
+	 * 处理 pi 扩展发起的 UI 请求（ctx.ui.select/confirm/input/editor/setWidget）。
+	 * 对话类请求写入消息流等待用户回答；setWidget 是 fire-and-forget，转发给渲染进程作为轻量状态块。
+	 */
+	private handleUIRequest(agentId: string, typed: Record<string, any>) {
+		const method = String(typed.method ?? "");
+		const requestId = String(typed.id ?? "");
+		if (method === "setWidget") {
+			const params = typed.params ?? {};
+			// Plan Mode 等扩展会频繁刷新 widget；只走 IPC 状态，不落入会话消息，避免 JSONL 被进度噪声污染。
+			this.emit(ipcChannels.agentsUiRequest, {
+				agentId,
+				requestId,
+				method,
+				title: "",
+				widgetKey: String(params.widgetKey ?? requestId),
+				widgetLines: Array.isArray(params.widgetLines) ? params.widgetLines : undefined,
+				widgetPlacement: params.widgetPlacement,
+			});
+			return;
+		}
+		// 其他非对话 UI 方法暂不占用桌面 UI 空间。
+		if (["setStatus", "setTitle"].includes(method)) return;
+
+		// select 无选项时自动取消，不等用户响应
+		if (method === "select" && (!Array.isArray(typed.params?.options) || typed.params.options.length === 0)) {
+			this.sendUIResponse(agentId, requestId, { cancelled: true });
+			return;
+		}
+
+		const request = {
+			agentId,
+			requestId,
+			method,
+			title: String(typed.params?.title ?? typed.params?.question ?? ""),
+			options: typed.params?.options as string[] | undefined,
+			placeholder: typed.params?.placeholder as string | undefined,
+			prefill: typed.params?.prefill as string | undefined,
+		};
+
+		// 记录 pending UI 请求，用于 abort 时自动 cancel
+		if (!this.pendingUIRequests.has(agentId)) {
+			this.pendingUIRequests.set(agentId, new Map());
+		}
+		this.pendingUIRequests.get(agentId)!.set(requestId, { method, title: request.title });
+
+		// 插入 system 消息作为卡片占位
+		this.addMessage(agentId, "system", request.title, {
+			type: "askQuestion",
+			status: "pending",
+			uiRequest: request,
+		});
+
+		// 通知渲染进程显示交互卡片
+		this.emit(ipcChannels.agentsUiRequest, request);
+	}
+
+	/**
+	 * 发送 Extension UI 响应（extension_ui_response）到 pi 的 stdin。
+	 * 同时更新对应卡片消息的状态。
+	 */
+	sendUIResponse(agentId: string, requestId: string, response: { value?: string; cancelled?: boolean }) {
+		const runtime = this.agents.get(agentId);
+		if (!runtime) return;
+
+		// 写入 extension_ui_response 到 pi 的 stdin
+		runtime.process.client.sendRaw({
+			type: "extension_ui_response",
+			id: requestId,
+			value: response.value,
+			cancelled: response.cancelled ?? false,
+		});
+
+		// 清理 pending 记录
+		const pending = this.pendingUIRequests.get(agentId);
+		if (pending) {
+			pending.delete(requestId);
+			if (pending.size === 0) this.pendingUIRequests.delete(agentId);
+		}
+
+		// 更新卡片消息状态为 answered 或 cancelled
+		const messages = this.messages.get(agentId);
+		if (messages) {
+			for (const msg of messages) {
+				if (
+					msg.role === "system" &&
+					msg.meta?.type === "askQuestion" &&
+					(msg.meta as Record<string, unknown>).uiRequest &&
+					((msg.meta as Record<string, unknown>).uiRequest as Record<string, unknown>).requestId === requestId
+				) {
+					(msg.meta as Record<string, string>).status = response.cancelled ? "cancelled" : "answered";
+					(msg.meta as Record<string, unknown>).response = response;
+					break;
+				}
+			}
+			this.scheduleMessageEmit(agentId, false);
+		}
+
+		// 通知渲染进程 UI 请求已完成
+		this.emit(ipcChannels.agentsUiRequest, { agentId, requestId, completed: true, ...response });
 	}
 
 	private handleAssistantMessageEvent(agentId: string, event: Record<string, any>) {
