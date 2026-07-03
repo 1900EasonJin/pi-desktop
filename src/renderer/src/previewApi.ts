@@ -576,6 +576,8 @@ export function createPreviewApi(): PiDesktopApi {
 			onRuntimeState: noop,
 			onUiRequest: noop,
 			sendUiResponse: async () => undefined,
+			onTrustRequest: noop,
+			respondTrustRequest: async () => undefined,
 		},
 		pet: {
 			onState: noop,

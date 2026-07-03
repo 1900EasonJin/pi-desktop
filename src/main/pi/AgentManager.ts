@@ -1,6 +1,9 @@
 import { app, type BrowserWindow, Notification } from "electron";
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import type {
 	AgentRuntimeState,
 	AgentTab,
@@ -21,6 +24,9 @@ import type { SettingsStore } from "../settings/SettingsStore";
 import type { ConfigManager } from "../config/ConfigManager";
 import type { RpcLogger } from "../logging/RpcLogger";
 import type { AppLogger } from "../logging/AppLogger";
+
+/** 项目信任确认弹窗的用户选择 */
+export type ProjectTrustChoice = "trust-remember" | "trust-session" | "deny";
 
 export class AgentManager {
 	private readonly agents = new Map<string, AgentRuntime>();
@@ -61,6 +67,8 @@ export class AgentManager {
 	 * 用于在 abor t时及时发送 cancellation 防止 pi 等待超时。
 	 */
 	private readonly pendingUIRequests = new Map<string, Map<string, { method: string; title: string }>>();
+	/** 待处理的项目信任确认请求。key 为 requestId，用于在 Agent 启动前等待用户的信任决策。 */
+	private readonly pendingTrustRequests = new Map<string, { resolve: (choice: ProjectTrustChoice) => void }>();
 
 	constructor(
 		private readonly getProject: (id: string) => Project | undefined,
@@ -75,6 +83,17 @@ export class AgentManager {
 		return [...this.agents.values()]
 			.map((runtime) => runtime.tab)
 			.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+	}
+
+	/**
+	 * 判断指定项目是否仍有运行中的 Agent（pi 子进程未退出）。
+	 * 用于删除项目前拦截，避免删除后 pi 进程悬挂后台继续占用资源。
+	 */
+	hasAgentForProject(projectId: string): boolean {
+		for (const runtime of this.agents.values()) {
+			if (runtime.tab.projectId === projectId) return true;
+		}
+		return false;
 	}
 
 	getMessages(agentId: string) {
@@ -227,7 +246,9 @@ export class AgentManager {
 				sessionPath: input.sessionPath,
 			});
 		}
-		// 信任确认由内置 pi-deck-project-trust 扩展处理：首次进入未信任项目时弹窗让用户选择信任策略。
+		// 启动 pi 前完成项目信任确认：含 .pi 资源的项目首次打开弹窗，干净项目自动信任。
+		// pi 在 RPC 模式下 project_trust 事件 hasUI 恒为 false，无法依赖其内置信任流程，故由桌面端自行拦截。
+		const trustOverride = await this.ensureProjectTrust(project);
 		// 代理环境变量只能在子进程启动前注入；设置变更后通过 restart/new agent 创建新的进程快照。
 		// 每个 Agent 独立启动 pi RPC，避免复用进程时 session、事件监听和配置快照串线。
 		const process = new PiProcess(project.path, this.settingsStore.get());
@@ -241,7 +262,7 @@ export class AgentManager {
 			projectPath: project.path,
 			sessionPath: input.sessionPath,
 		});
-		const client = process.start(input.sessionPath);
+		const client = process.start(input.sessionPath, trustOverride);
 
 		process.on("event", (event) => this.handlePiEvent(id, event));
 		process.on("stderr", (text) =>
@@ -1502,6 +1523,118 @@ export class AgentManager {
 
 		// 通知渲染进程 UI 请求已完成
 		this.emit(ipcChannels.agentsUiRequest, { agentId, requestId, completed: true, ...response });
+	}
+
+	/**
+	 * pi 信任机制只对“含项目级 pi 资源”的项目触发，且 RPC 模式下 pi 的 project_trust 事件
+	 * hasUI 恒为 false、ctx.ui.select 不接 RPC UI 协议，无法弹窗。
+	 * 因此 pi-desktop 在启动 pi 进程前自行完成信任确认：干净项目自动信任并写入 trust.json；
+	 * 含 .pi/.agents 资源且未记录的项目弹窗让用户决策。
+	 */
+	private static readonly TRUST_REQUIRING_RESOURCE_FILES = [
+		"settings.json",
+		"extensions",
+		"skills",
+		"prompts",
+		"themes",
+		"SYSTEM.md",
+		"APPEND_SYSTEM.md",
+	] as const;
+
+	/**
+	 * 复刻 pi 的 hasTrustRequiringProjectResources：检查项目目录或其父目录是否存在
+	 * 需要信任才能加载的资源（.pi 下的配置/扩展/skills 等，或项目级 .agents/skills）。
+	 * 用户全局 ~/.agents/skills 视为可信，不触发信任确认。
+	 */
+	private hasTrustRequiringResources(cwd: string): boolean {
+		const configDir = join(cwd, ".pi");
+		if (
+			AgentManager.TRUST_REQUIRING_RESOURCE_FILES.some((file) => existsSync(join(configDir, file)))
+		) {
+			return true;
+		}
+		const userAgentsSkillsDir = join(homedir(), ".agents", "skills");
+		let currentDir = cwd;
+		while (true) {
+			const agentsSkillsDir = join(currentDir, ".agents", "skills");
+			if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
+				return true;
+			}
+			const parentDir = dirname(currentDir);
+			if (parentDir === currentDir) return false;
+			currentDir = parentDir;
+		}
+	}
+
+	/**
+	 * 启动 pi 前完成项目信任确认。
+	 * - 无需信任资源的项目（干净项目）：自动写入 trust.json 标记信任，后续不再重复检查。
+	 * - 含信任资源的项目：已信任则放行；已显式拒绝则抛错；未记录则弹窗等待用户决策。
+	 */
+	/**
+	 * 启动 pi 前完成项目信任确认，返回需传给 pi 的信任覆盖指令。
+	 * - 无需信任资源的项目（干净项目）：自动写入 trust.json 标记信任。
+	 * - 已信任：放行，pi 查 trustStore 即可。
+	 * - 未记录或曾记 false：弹窗让用户选择。不持久化 false，保证下次仍可重新选择。
+	 *   - trust-remember：写 true，pi 信任加载资源。
+	 *   - trust-session：用 --approve 本次覆盖，不落盘。
+	 *   - deny：用 --no-approve 本次以不信任模式启动，pi 不加载项目级资源，Agent 仍可创建。
+	 */
+	private async ensureProjectTrust(project: Project): Promise<"approve" | "no-approve" | undefined> {
+		const cwd = project.path;
+		if (!this.hasTrustRequiringResources(cwd)) {
+			// 干净项目：pi 无需加载项目级资源，pi-desktop 自动记入信任，避免每次创建 Agent 重复检查。
+			await this.configManager.ensureTrustedDirectory(cwd);
+			return undefined;
+		}
+		const decision = await this.configManager.getProjectTrustDecision(cwd);
+		if (decision === true) return undefined;
+		// 未记录或曾记 false：弹窗让用户选择信任策略。不写 false，确保下次打开仍可重新决策。
+		const choice = await this.requestProjectTrust(cwd, project.name);
+		if (choice === "trust-remember") {
+			await this.configManager.setProjectTrustDecision(cwd, true);
+			return undefined;
+		}
+		if (choice === "trust-session") {
+			return "approve";
+		}
+		// deny：本次以不信任模式启动，pi 不加载项目级资源，Agent 仍可创建。
+		return "no-approve";
+	}
+
+	/**
+	 * 通过 IPC 请求渲染进程弹出项目信任确认窗，等待用户选择。
+	 * 无窗口可用（如 headless）或 60 秒未响应时默认拒绝（安全优先）。
+	 */
+	private requestProjectTrust(cwd: string, projectName: string): Promise<ProjectTrustChoice> {
+		const requestId = randomUUID();
+		const win = this.getWindow();
+		if (!win || win.isDestroyed()) {
+			return Promise.resolve<ProjectTrustChoice>("deny");
+		}
+		return new Promise<ProjectTrustChoice>((resolve) => {
+			const timer = setTimeout(() => {
+				if (this.pendingTrustRequests.delete(requestId)) {
+					resolve("deny");
+				}
+			}, 60_000);
+			this.pendingTrustRequests.set(requestId, {
+				resolve: (choice) => {
+					clearTimeout(timer);
+					resolve(choice);
+				},
+			});
+			win.webContents.send(ipcChannels.agentsTrustRequest, { requestId, cwd, projectName });
+		});
+	}
+
+	/** 渲染进程回传用户对信任确认弹窗的选择，唤醒等待中的 Agent 创建流程。 */
+	respondTrustRequest(requestId: string, choice: ProjectTrustChoice): void {
+		const pending = this.pendingTrustRequests.get(requestId);
+		if (pending) {
+			this.pendingTrustRequests.delete(requestId);
+			pending.resolve(choice);
+		}
 	}
 
 	private handleAssistantMessageEvent(agentId: string, event: Record<string, any>) {

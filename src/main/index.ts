@@ -1105,6 +1105,10 @@ function registerIpc() {
 		return project;
 	});
 	ipcMain.handle(ipcChannels.projectsRemove, async (_event, id: string) => {
+		// 删除前拦截：项目仍有运行中的 Agent（pi 子进程）时禁止删除，避免进程悬挂后台继续占用资源。
+		if (agentManager.hasAgentForProject(id)) {
+			throw new Error("PROJECT_HAS_RUNNING_AGENT");
+		}
 		await projectStore.remove(id);
 		void appLogger.info("project", "Project removed", { projectId: id });
 		return projectStore.list();
@@ -1914,6 +1918,12 @@ function registerIpc() {
 	ipcMain.handle(ipcChannels.configGetTrust, () =>
 		configManager.getTrustConfig(),
 	);
+	// 项目信任确认：渲染进程回传用户选择，唤醒等待中的 Agent 创建流程（见 AgentManager.ensureProjectTrust）
+	ipcMain.handle(
+		ipcChannels.agentsTrustResponse,
+		(_event, requestId: string, choice: "trust-remember" | "trust-session" | "deny") =>
+			agentManager.respondTrustRequest(requestId, choice),
+	);
 	ipcMain.handle(ipcChannels.configSaveModels, async (_event, data) => {
 		const result = await configManager.saveModelsConfig(data);
 		void appLogger.info("config", "Models config saved", { providerCount: Object.keys(data?.providers ?? {}).length });
@@ -2099,12 +2109,17 @@ app.whenReady().then(async () => {
 		"pi-deck-file-capture.ts",
 		"pi-deck-ask-question.ts",
 		"pi-deck-plan-mode.ts",
-		"pi-deck-project-trust.ts",
 	]) {
 		await ensurePiDeckExtension(extensionName).catch((error) => {
 			console.error(`Failed to install ${extensionName}:`, error);
 		});
 	}
+
+	// 清理已废弃的 pi-deck-project-trust 扩展：RPC 模式下 pi 的 project_trust 事件 hasUI 恒为 false，
+	// 该扩展无法弹窗，信任确认改由桌面端 AgentManager.ensureProjectTrust 自行处理，删除残留避免用户误解。
+	await removeStalePiDeckExtension("pi-deck-project-trust.ts").catch((error) => {
+		console.error("Failed to remove stale pi-deck-project-trust extension:", error);
+	});
 
 	await appLogger.info("app", "Application started", {
 		version: app.getVersion(),
@@ -2201,6 +2216,17 @@ async function ensurePiDeckExtension(extensionName: string): Promise<void> {
 	await mkdir(extensionsDir, { recursive: true });
 	await writeFile(targetPath, sourceContent, "utf-8");
 	console.log(`[PiDeck] Installed extension: ${targetPath}`);
+}
+
+/**
+ * 删除已下线的 PiDeck 内置扩展残留文件（如 pi-deck-project-trust.ts）。
+ * 用于扩展废弃后清理用户扩展目录，避免 pi 仍加载无效扩展造成误解。
+ * rm 的 force 选项会在文件不存在时静默忽略。
+ */
+async function removeStalePiDeckExtension(extensionName: string): Promise<void> {
+	const targetPath = join(app.getPath("home"), ".pi", "agent", "extensions", extensionName);
+	await rm(targetPath, { force: true });
+	console.log(`[PiDeck] Removed stale extension: ${targetPath}`);
 }
 
 app.on("before-quit", () => {

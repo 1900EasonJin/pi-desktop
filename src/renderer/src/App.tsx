@@ -41,6 +41,7 @@ import {
 import { createPreviewApi } from "./previewApi";
 import { createBrowserApi } from "./browserApi";
 import { ConfigModal } from "./ConfigModal";
+import { TrustConfirmModal } from "./components/app/TrustConfirmModal";
 import { TerminalDock } from "./components/terminal/TerminalDock";
 import { FeishuLinkIndicator } from "./components/feishu/FeishuLinkIndicator";
 import { useFeishuBridge } from "./hooks/useFeishuBridge";
@@ -574,6 +575,12 @@ export function App() {
     onConfirm: () => void;
     danger?: boolean;
     confirmLabel?: string;
+  } | null>(null);
+  // 项目信任确认请求：含 .pi 资源且未记录决策的项目首次创建 Agent 时由主进程发起
+  const [trustRequest, setTrustRequest] = useState<{
+    requestId: string;
+    cwd: string;
+    projectName: string;
   } | null>(null);
   const [renamingFile, setRenamingFile] = useState<{
     path: string;
@@ -1359,6 +1366,10 @@ export function App() {
         return { ...(current ?? {}), [request.requestId]: request as UiRequest };
       });
     });
+    // 监听项目信任确认请求：主进程在启动 pi 前对含 .pi 资源的项目发起，弹窗等待用户决策
+    const offTrustRequest = api.agents.onTrustRequest((request) => {
+      setTrustRequest(request);
+    });
     return () => {
       offProjects();
       offState();
@@ -1369,6 +1380,7 @@ export function App() {
       offRuntimeState();
       offThinking();
       offUiRequest();
+      offTrustRequest();
     };
   }, []);
 
@@ -4241,9 +4253,21 @@ ${goalTextRef.current}
                         title={t("app.projectRemoveTitle")}
                         onClick={async (event) => {
                           event.stopPropagation();
-                          const next = await api.projects.remove(project.id);
-                          setProjects(next);
-                          updateAfterProjectRemoved(project.id, next);
+                          try {
+                            const next = await api.projects.remove(project.id);
+                            setProjects(next);
+                            updateAfterProjectRemoved(project.id, next);
+                          } catch (e) {
+                            // 项目仍有运行中的 Agent 时禁止删除，主进程抛 PROJECT_HAS_RUNNING_AGENT
+                            if (String((e as Error)?.message ?? e).includes("PROJECT_HAS_RUNNING_AGENT")) {
+                              setConfirmDialog({
+                                title: t("app.projectRemoveBlockedTitle"),
+                                message: t("app.projectRemoveBlockedByAgent"),
+                                confirmLabel: t("app.projectRemoveBlockedAck"),
+                                onConfirm: () => setConfirmDialog(null),
+                              });
+                            }
+                          }
                         }}
                       >
                         <Trash2 size={14} />
@@ -5343,9 +5367,20 @@ ${goalTextRef.current}
           onRemoveProject={async () => {
             const project = projectMenu.project;
             setProjectMenu(null);
-            const next = await api.projects.remove(project.id);
-            setProjects(next);
-            updateAfterProjectRemoved(project.id, next);
+            try {
+              const next = await api.projects.remove(project.id);
+              setProjects(next);
+              updateAfterProjectRemoved(project.id, next);
+            } catch (e) {
+              if (String((e as Error)?.message ?? e).includes("PROJECT_HAS_RUNNING_AGENT")) {
+                setConfirmDialog({
+                  title: t("app.projectRemoveBlockedTitle"),
+                  message: t("app.projectRemoveBlockedByAgent"),
+                  confirmLabel: t("app.projectRemoveBlockedAck"),
+                  onConfirm: () => setConfirmDialog(null),
+                });
+              }
+            }
           }}
         />
       )}
@@ -5735,6 +5770,17 @@ ${goalTextRef.current}
           confirmLabel={confirmDialog.confirmLabel}
           onConfirm={confirmDialog.onConfirm}
           onCancel={() => setConfirmDialog(null)}
+        />
+      )}
+
+      {trustRequest && (
+        <TrustConfirmModal
+          cwd={trustRequest.cwd}
+          projectName={trustRequest.projectName}
+          onChoose={(choice) => {
+            api.agents.respondTrustRequest(trustRequest.requestId, choice);
+            setTrustRequest(null);
+          }}
         />
       )}
 
