@@ -2276,8 +2276,9 @@ export class AgentManager {
 					if (typeof item === "string") return item;
 					if (item && typeof item === "object") {
 						const typed = item as any;
-						// 跳过 thinking 和 image 类型的内容，只提取实际文本回复
-						if (typed.type === "thinking" || typed.type === "image") return "";
+						if (typed.type === "image") return "";
+						// thinking 块以 <thinking> 标签嵌入 text，保留原始交替顺序
+						if (typed.type === "thinking") return `<thinking>${String(typed.thinking ?? "")}</thinking>`;
 						return String(typed.text ?? "");
 					}
 					return "";

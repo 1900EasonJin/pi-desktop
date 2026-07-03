@@ -1543,7 +1543,9 @@ body.is-terminal-resizing {
 	margin-inline: auto;
 }
 .chat-pane[style*="--content-max-width"] .composer-box,
-.chat-pane[style*="--content-max-width"] .image-preview-area {
+.chat-pane[style*="--content-max-width"] .image-preview-area,
+.chat-pane[style*="--content-max-width"] .extension-widget-stack,
+.chat-pane[style*="--content-max-width"] .composer-footer {
 	width: min(100%, var(--content-max-width));
 	max-width: var(--content-max-width);
 	margin-inline: auto;
@@ -2200,6 +2202,11 @@ body.is-terminal-resizing {
 .message-list {
 	min-width: 0;
 	margin: 0 auto;
+}
+/* 消息间间距：每条用户/助手/工具/诊断卡片之间留出呼吸空间
+   双类名提升特异性，确保不被组件自身 margin 覆盖 */
+.message-list.message-list > * + * {
+	margin-top: var(--space-4);
 }
 /* 会话定位跳转命中时的短暂高亮，帮助用户在长会话中识别落点。 */
 @keyframes messageJumpHighlight {
@@ -2913,9 +2920,6 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	font-size: var(--font-size-body);
 	line-height: 1.62;
 }
-.assistant-text:not(:first-child) {
-	margin-top: var(--space-2);
-}
 
 /* ---------- 诊断卡片：错误 / RPC / 系统状态 ---------- */
 .diagnostic-card {
@@ -3310,6 +3314,16 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	flex: 0 0 auto;
 	color: var(--color-info);
 }
+.thinking-card-subtitle {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-family-mono);
+	font-size: var(--font-size-caption);
+	flex: 1 1 auto;
+	min-width: 0;
+}
 .thinking-card-trigger span {
 	flex: 0 0 auto;
 	font-weight: 500;
@@ -3352,7 +3366,6 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 /* 流式思考卡片：实时展示推理过程 */
 .thinking-card.streaming {
 	border-top: 1px solid var(--color-accent);
-	margin-top: 0;
 	border-color: var(--color-accent);
 }
 .thinking-card.streaming .thinking-card-content {
@@ -3377,7 +3390,7 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-2);
-	margin: 0 0 var(--space-4) var(--space-4);
+	margin: 0 0 0 var(--space-4);
 	padding: 8px 12px;
 	border: 1px solid var(--color-border-subtle);
 	border-radius: var(--radius-md);
@@ -3432,7 +3445,7 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	width: 100%;
 	max-width: 100%;
 	min-width: 0;
-	margin: 0 0 var(--space-5);
+	margin: 0;
 }
 .user-turn-attachments {
 	display: flex;
@@ -6086,6 +6099,29 @@ body.is-composer-resizing .composer-resize-handle::after {
 @keyframes compact-pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.65; }
+}
+
+/* 全局运行指示器：取代消息列表中的 ThinkingIndicator，在工具栏中常驻显示 */
+.composer-running-indicator {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+	color: var(--color-accent);
+	font-size: var(--font-size-caption);
+	font-family: var(--font-family-base);
+	user-select: none;
+}
+.running-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: var(--radius-pill);
+	background: var(--color-accent);
+	animation: runningDotPulse 1.2s ease-in-out infinite;
+}
+@keyframes runningDotPulse {
+	0%, 100% { opacity: 0.3; transform: scale(0.85); }
+	50% { opacity: 1; transform: scale(1); }
 }
 
 /* ---- 输入框命令模式指示 ---- */

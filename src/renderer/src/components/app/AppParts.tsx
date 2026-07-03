@@ -450,6 +450,8 @@ export function ComposerToolbar(props: {
 	onOpenComposerModePicker?: () => void;
 	/** 在思考按钮后插入的额外指示器（如飞书链接状态） */
 	feishuIndicator?: ReactNode;
+	/** Agent 正在运行中，显示全局脉冲指示 */
+	isRunning?: boolean;
 }) {
 	const ctxPercent = props.state?.contextPercent;
 	const showCompact = ctxPercent != null && ctxPercent > 30;
@@ -486,6 +488,12 @@ export function ComposerToolbar(props: {
 				{t("app.think")}: {thinkingDisplay}
 			</button>
 			{props.feishuIndicator}
+			{props.isRunning && (
+				<span className="composer-running-indicator">
+					<span className="running-dot" />
+					{t("app.statusRunning")}
+				</span>
+			)}
 			{showCompact && (
 				<button
 					className={
@@ -1807,6 +1815,11 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: {
 			>
 				<Brain size={14} />
 				<span>{t("thinking.title")}</span>
+				{!expanded && props.text && (
+					<span className="thinking-card-subtitle" title={props.text}>
+						{props.text.slice(0, 80)}{props.text.length > 80 ? "..." : ""}
+					</span>
+				)}
 				{props.endedAt ? <small>{formatTime(props.endedAt)}</small> : null}
 				<em>{expanded ? t("common.collapse") : t("common.expand")}</em>
 				<ChevronDown
@@ -1948,7 +1961,7 @@ export const AssistantText = memo(
 		 *  mermaid 图渲染，避免每个 token 都对不断增长的全量正文调用重型插件导致主线程卡死。 */
 		isStreaming?: boolean;
 	}) {
-		// 统一在此处清理 ANSI 转义码与 <thinking> 标签，调用方可直接传原始消息文本
+		// 清理 ANSI 转义码与 <thinking> 标签，thinking 由调用方通过 ThinkingBlock 渲染
 		const cleanText = stripThinkingTags(stripAnsi(props.text));
 		// 流式期间用轻量管线（仅 GFM + 路径链接化），回答结束后切回含数学/图表的完整渲染。
 		const streaming = Boolean(props.isStreaming);
