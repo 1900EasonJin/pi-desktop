@@ -3319,8 +3319,8 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 	color: var(--color-text-tertiary);
-	font-size: var(--font-size-micro);
-	font-family: var(--font-family-business);
+	font-family: var(--font-family-mono);
+	font-size: var(--font-size-caption);
 	flex: 1 1 auto;
 	min-width: 0;
 }
