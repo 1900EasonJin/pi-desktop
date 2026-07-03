@@ -91,6 +91,7 @@ import {
   ThinkingPicker,
   UserBubble,
   AssistantText,
+  ThinkingBlock,
   ToolCard,
   AskQuestionCard,
   applySuggestion,
@@ -4739,14 +4740,18 @@ ${goalTextRef.current}
                     <Fragment key={message.id}>
                       <AssistantText
                         text={message.text}
-                        thinking={message.thinking}
                         images={message.images}
                         onPreviewImage={setPreviewImage}
                         onOpenExternal={(url) => api.app.openExternal(url)}
                         onOpenFile={openFilePath}
                         isStreaming={message.id === streamingMessageId}
-                        showThinking={settings.showThinking}
                       />
+                      {settings.showThinking && message.thinking?.trim() && (
+                        <ThinkingBlock
+                          text={message.thinking}
+                          showThinking={settings.showThinking}
+                        />
+                      )}
                       {turnFileSummaryByMessage[message.id]?.length > 0 && (
                         <SessionFileSummary
                           files={turnFileSummaryByMessage[message.id]}
