@@ -1959,27 +1959,39 @@ export const AssistantText = memo(
 		/** 是否内联展开 thinking 段，替代旧的折叠卡片外挂模式。
 		 *  为 true 时 text 中的 <thinking> 标签保留在原位，渲染为斜体次级色块。 */
 		showThinking?: boolean;
+		/** 消息独立 thinking 字段，当 text 中无 <thinking> 标签时作为回退。 */
+		thinking?: string;
 	}) {
 		// 统一此处清理 ANSI 转义码；调用方根据 showThinking 决定是否保留 thinking 标签。
 		const rawText = stripAnsi(props.text);
 		const streaming = Boolean(props.isStreaming);
-		const renderInlineThinking = props.showThinking && /<thinking>/i.test(rawText);
+		const hasThinkingTags = /<thinking>/i.test(rawText);
+		const renderInlineThinking = props.showThinking && (hasThinkingTags || props.thinking?.trim());
 		// 当 showThinking 时按 thinking 标签切分，把每段渲染为独立 markdown 块
 		const segments = useMemo(() => {
 			if (!renderInlineThinking) return null;
-			const parts = rawText.split(/(<thinking>[\s\S]*?<\/thinking>)/g);
-			return parts
-				.map((part) => {
-					const m = part.match(/^<thinking>([\s\S]*)<\/thinking>$/);
-					if (m) {
-						const content = m[1].trim();
-						return content ? { type: "thinking" as const, content } : null;
-					}
-					const trimmed = part.trim();
-					return trimmed ? { type: "text" as const, content: trimmed } : null;
-				})
-				.filter(Boolean) as Array<{ type: "text" | "thinking"; content: string }>;
-		}, [renderInlineThinking, rawText]);
+			// 优先解析文本中的 <thinking> 标签实现原位交替
+			if (hasThinkingTags) {
+				const parts = rawText.split(/(<thinking>[\s\S]*?<\/thinking>)/g);
+				return parts
+					.map((part) => {
+						const m = part.match(/^<thinking>([\s\S]*)<\/thinking>$/);
+						if (m) {
+							const content = m[1].trim();
+							return content ? { type: "thinking" as const, content } : null;
+						}
+						const trimmed = part.trim();
+						return trimmed ? { type: "text" as const, content: trimmed } : null;
+					})
+					.filter(Boolean) as Array<{ type: "text" | "thinking"; content: string }>;
+			}
+			// 无 thinking 标签但提供了 thinking 字段：追加到正文尾部
+			const hasText = stripThinkingTags(rawText).trim();
+			const result: Array<{ type: "text" | "thinking"; content: string }> = [];
+			if (hasText) result.push({ type: "text", content: hasText });
+			if (props.thinking?.trim()) result.push({ type: "thinking", content: stripAnsi(props.thinking) });
+			return result.length > 0 ? result : null;
+		}, [renderInlineThinking, hasThinkingTags, rawText, props.thinking]);
 		// 不展开时仍剥离 thinking 标签，保持旧行为
 		const cleanText = !renderInlineThinking ? stripThinkingTags(rawText) : "";
 
@@ -2056,7 +2068,8 @@ export const AssistantText = memo(
 		prev.text === next.text &&
 		prev.isStreaming === next.isStreaming &&
 		prev.images === next.images &&
-		prev.showThinking === next.showThinking,
+		prev.showThinking === next.showThinking &&
+		prev.thinking === next.thinking,
 );
 
 /** 一轮 AI 回答的扁平容器：左侧竖线聚合，内含思考/工具/正文/文件摘要。

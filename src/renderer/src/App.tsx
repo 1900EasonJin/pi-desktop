@@ -4739,6 +4739,7 @@ ${goalTextRef.current}
                     <Fragment key={message.id}>
                       <AssistantText
                         text={message.text}
+                        thinking={message.thinking}
                         images={message.images}
                         onPreviewImage={setPreviewImage}
                         onOpenExternal={(url) => api.app.openExternal(url)}
