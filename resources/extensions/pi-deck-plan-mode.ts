@@ -174,7 +174,7 @@ export default function piDeckPlanModeExtension(pi: ExtensionAPI): void {
 		if (executionMode && todoItems.length > 0) {
 			const completed = todoItems.filter((item) => item.completed).length;
 			ctx.ui.setWidget("pi-deck-plan-todos", [
-				`Plan progress ${completed}/${todoItems.length}`,
+				`计划进度 ${completed}/${todoItems.length}`,
 				...todoItems.map((item) => `${item.completed ? "☑" : "☐"} ${item.step}. ${item.text}`),
 			]);
 			return;
@@ -221,17 +221,17 @@ export default function piDeckPlanModeExtension(pi: ExtensionAPI): void {
 		todoItems = [];
 		if (enabled) {
 			enablePlanModeTools();
-			ctx.ui.notify("PiDeck Plan Mode enabled. Write tools are disabled until you execute a plan.", "info");
+			ctx.ui.notify("PiDeck 计划模式已启用。启用期间只能执行只读命令，不能修改文件。", "info");
 		} else {
 			restoreNormalModeTools();
-			ctx.ui.notify("PiDeck Plan Mode disabled. Normal tools restored.", "info");
+			ctx.ui.notify("PiDeck 计划模式已禁用。已恢复写权限。", "info");
 		}
 		updateWidget(ctx);
 		persistState();
 	}
 
 	pi.registerCommand("plan", {
-		description: "Toggle PiDeck plan mode (read-only exploration)",
+		description: "切换 PiDeck 计划模式（只读探索，适用于复杂任务先做分析）",
 		handler: async (args, ctx) => {
 			const normalized = String(args ?? "").trim().toLowerCase();
 			if (["on", "enable", "enabled"].includes(normalized)) setPlanMode(ctx, true);
@@ -241,10 +241,10 @@ export default function piDeckPlanModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("todos", {
-		description: "Show current PiDeck plan progress",
+		description: "查看当前计划进度",
 		handler: async (_args, ctx) => {
 			if (todoItems.length === 0) {
-				ctx.ui.notify("No active PiDeck plan todos.", "info");
+				ctx.ui.notify("没有活跃的计划事项。", "info");
 				return;
 			}
 			ctx.ui.notify(
@@ -255,7 +255,15 @@ export default function piDeckPlanModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", async (event, ctx) => {
-		if (!event.text.startsWith(PI_DECK_PLAN_MODE_MARKER)) return;
+		if (!event.text.startsWith(PI_DECK_PLAN_MODE_MARKER)) {
+			// 用户发了一条普通消息（无 plan 标记）：若仍处于 plan 模式且非执行中，
+			// 视为退出 plan——composer 切回 normal 发消息即退出只读模式。
+			// pi-desktop RPC 模式下 /plan 命令不路由，这里作为会话内退出的兜底。
+			if (planModeEnabled && !executionMode) {
+				setPlanMode(ctx, false);
+			}
+			return;
+		}
 
 		// 由桌面输入框模式触发：隐藏标记只用于路由，必须在进入 LLM 前剥离。
 		planModeEnabled = true;
@@ -353,34 +361,44 @@ export default function piDeckPlanModeExtension(pi: ExtensionAPI): void {
 		persistState();
 
 		const todoListText = todoItems.map((item) => `${item.step}. ☐ ${item.text}`).join("\n");
-		const choice = await ctx.ui.select("PiDeck Plan Mode - what next?", [
-			"Execute the plan (track progress)",
-			"Stay in plan mode",
-			"Refine the plan",
-		]);
+		// 循环展示选单：取消「修改计划」时回到选单，避免用户误点后 agent 空停
+		let actionTaken = false;
+		while (!actionTaken) {
+			const choice = await ctx.ui.select("PiDeck 计划模式 — 计划已生成，请选择下一步", [
+				"执行计划（AI 开始逐步实施，并自动标记完成进度）",
+				"继续只读分析（AI 继续分析，仍不能修改文件）",
+				"修改计划（编辑计划步骤后重新提交给 AI）",
+			]);
 
-		if (choice?.startsWith("Execute")) {
-			planModeEnabled = false;
-			executionMode = true;
-			restoreNormalModeTools();
-			updateWidget(ctx);
-			persistState();
-			pi.sendMessage(
-				{ customType: "pi-deck-plan-todos", content: `**Plan Steps (${todoItems.length})**\n\n${todoListText}`, display: true },
-				{ deliverAs: "followUp" },
-			);
-			pi.sendMessage(
-				{
-					customType: "pi-deck-plan-execute",
-					content: `Execute the approved plan.\n\n${todoItems.map((item) => `${item.step}. ${item.text}`).join("\n")}\n\nAfter completing a step, include [DONE:n].`,
-					display: true,
-				},
-				{ triggerTurn: true, deliverAs: "followUp" },
-			);
-		} else if (choice === "Refine the plan") {
-			const refinement = await ctx.ui.editor("How should the plan be refined?", "");
-			if (refinement?.trim()) {
-				pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
+			if (choice?.startsWith("执行")) {
+				planModeEnabled = false;
+				executionMode = true;
+				restoreNormalModeTools();
+				updateWidget(ctx);
+				persistState();
+				pi.sendMessage(
+					{ customType: "pi-deck-plan-todos", content: `**Plan Steps (${todoItems.length})**\n\n${todoListText}`, display: true },
+					{ deliverAs: "followUp" },
+				);
+				pi.sendMessage(
+					{
+						customType: "pi-deck-plan-execute",
+						content: `Execute the approved plan.\n\n${todoItems.map((item) => `${item.step}. ${item.text}`).join("\n")}\n\nAfter completing a step, include [DONE:n].`,
+						display: true,
+					},
+					{ triggerTurn: true, deliverAs: "followUp" },
+				);
+				actionTaken = true;
+			} else if (choice?.startsWith("修改")) {
+				const refinement = await ctx.ui.editor("如何修改计划？", "");
+				if (refinement?.trim()) {
+					pi.sendUserMessage(refinement.trim(), { deliverAs: "followUp" });
+					actionTaken = true;
+				}
+				// 取消或空内容 → 循环回到选单
+			} else {
+				// 继续只读分析 → 直接退出循环，agent 结束当前回合
+				actionTaken = true;
 			}
 		}
 	});
@@ -391,12 +409,13 @@ export default function piDeckPlanModeExtension(pi: ExtensionAPI): void {
 			.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "pi-deck-plan-mode")
 			.pop() as { data?: PlanModeState } | undefined;
 		if (planModeEntry?.data) {
-			planModeEnabled = planModeEntry.data.enabled ?? planModeEnabled;
+			// plan 模式不跨会话恢复：新会话默认 normal，避免用户被锁在只读模式无法写入。
+			// 仅 execution（正在执行已确认计划）和 todos 跨会话续接。
 			todoItems = planModeEntry.data.todos ?? todoItems;
 			executionMode = planModeEntry.data.executing ?? executionMode;
 			toolsBeforePlanMode = planModeEntry.data.toolsBeforePlanMode ?? toolsBeforePlanMode;
 		}
-		if (planModeEnabled) enablePlanModeTools();
+		planModeEnabled = false;
 		updateWidget(ctx);
 	});
 }
