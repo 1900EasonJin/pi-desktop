@@ -4736,6 +4736,49 @@ ${goalTextRef.current}
                   );
                 }
                 if (message.role === "assistant") {
+                  // 按 <thinking> 标签切分，保持原文交替顺序，不合并
+                  const hasThinkingTags = /<thinking>/i.test(message.text);
+                  if (hasThinkingTags) {
+                    const parts = message.text.split(/(<thinking>[\s\S]*?<\/thinking>)/g);
+                    const segs = parts
+                      .map((part: string) => {
+                        const m = part.match(/^<thinking>([\s\S]*)<\/thinking>$/);
+                        if (m) {
+                          const c = m[1].trim();
+                          return c && settings.showThinking ? { type: "thinking" as const, content: c } : null;
+                        }
+                        const t = part.trim();
+                        return t ? { type: "text" as const, content: t } : null;
+                      })
+                      .filter(Boolean) as Array<{ type: "text" | "thinking"; content: string }>;
+                    return (
+                      <Fragment key={message.id}>
+                        {segs.map((seg, i) =>
+                          seg.type === "thinking" ? (
+                            <ThinkingBlock key={i} text={seg.content} showThinking={settings.showThinking} />
+                          ) : (
+                            <AssistantText
+                              key={`t${i}`}
+                              text={seg.content}
+                              images={i === 0 ? message.images : undefined}
+                              onPreviewImage={setPreviewImage}
+                              onOpenExternal={(url) => api.app.openExternal(url)}
+                              onOpenFile={openFilePath}
+                              isStreaming={message.id === streamingMessageId}
+                            />
+                          ),
+                        )}
+                        {turnFileSummaryByMessage[message.id]?.length > 0 && (
+                          <SessionFileSummary
+                            files={turnFileSummaryByMessage[message.id]}
+                            onOpenFile={openFilePath}
+                            onDiffFile={diffFilePath}
+                          />
+                        )}
+                      </Fragment>
+                    );
+                  }
+                  // 无 thinking 标签：用 message.thinking 字段兜底
                   return (
                     <Fragment key={message.id}>
                       <AssistantText
