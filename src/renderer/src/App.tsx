@@ -89,12 +89,10 @@ import {
   SessionFileSummary,
   ComposerModePicker,
   ThinkingPicker,
-  TurnRow,
   UserBubble,
   AssistantText,
-  ToolGroupCard,
+  ToolCard,
   AskQuestionCard,
-  ThinkingBlock,
   ThinkingIndicator,
   applySuggestion,
   buildOutline,
@@ -103,7 +101,6 @@ import {
   detectTrigger,
   displayPath,
   flattenFiles,
-  groupToolMessages,
   matches,
   mergeCommands,
   type DrawerPanel,
@@ -927,10 +924,7 @@ export function App() {
     return undefined;
   }, [activeMessages]);
 
-  const renderedMessages = useMemo(
-    () => groupToolMessages(paginatedMessages),
-    [paginatedMessages],
-  );
+
   const isAwaitingAssistant = Boolean(
     activeAgent &&
     (activeAgent.status === "running" || activeRuntimeState?.isStreaming) &&
@@ -1757,7 +1751,7 @@ export function App() {
     el.scrollIntoView({ behavior: "smooth", block: "start" });
     highlightMessageElement(el);
     setPendingJumpId(null);
-  }, [pendingJumpId, paginatedMessages.length, renderedMessages]);
+  }, [pendingJumpId, paginatedMessages.length]);
 
   // 追踪 agent 会话开始/结束时间,计算会话时长
   // 点击外部区域自动关闭会话组合下拉
@@ -4724,75 +4718,76 @@ ${goalTextRef.current}
           )}
           {activeAgent && (
             <div className="message-list">
-              {renderedMessages.map((item) =>
-                item.kind === "agent-run" ? (
-                  <TurnRow
-                    key={item.id}
-                    run={item}
-                    onPreviewImage={setPreviewImage}
-                    onOpenExternal={(url) => api.app.openExternal(url)}
-                    onOpenFile={openFilePath}
-                    onDiffFile={diffFilePath}
-                    onResendUserMessage={resendUserMessage}
-                    onEditMessage={editMessage}
-                    onDeleteMessage={deleteMessage}
-                    showThinking={settings.showThinking}
-                    isStreaming={Boolean(streamingMessageId) && item.id.endsWith(streamingMessageId ?? "")}
-                    fileSummariesByMessage={turnFileSummaryByMessage}
-                  />
-                ) : item.kind === "tool-group" ? (
-                  <ToolGroupCard key={item.id} group={item} />
-                ) : item.kind === "thinking-group" ? (
-                  <ThinkingBlock
-                    key={item.id}
-                    text={item.text}
-                    endedAt={item.endedAt}
-                    showThinking={settings.showThinking}
-                  />
-                ) : item.message.role === "user" ? (
-                  <UserBubble
-                    key={item.message.id}
-                    message={item.message}
-                    onPreviewImage={setPreviewImage}
-                    onOpenFile={openFilePath}
-                    onResendUserMessage={resendUserMessage}
-                    onEditMessage={editMessage}
-                    onDeleteMessage={deleteMessage}
-                    isLastUserMessage={item.message.id === lastUserMessageId}
-                    validCommandNames={validCommandNames}
-                  validFilePaths={validFilePaths}
-                  />
-                ) : item.message.role === "error" ? (
-                  <DiagnosticMessageCard key={item.message.id} message={item.message} />
-                ) : item.message.role === "system" && (item.message.meta as any)?.type === "askQuestion" ? (
-                  <AskQuestionCard key={item.message.id} message={item.message} onRespond={(response) => {
-                    const req = (item.message.meta as any).uiRequest;
-                    if (req && activeAgentId) api.agents.sendUiResponse(activeAgentId, req.requestId, response);
-                  }} />
-                ) : item.message.role === "system" && (item.message.meta as any)?.type === "compaction" ? (
-                  <CompactionCard key={item.message.id} message={item.message} />
-                ) : item.message.role === "system" ? (
-                  <DiagnosticMessageCard key={item.message.id} message={item.message} />
-                ) : (
-                  <Fragment key={item.message.id}>
-                    <AssistantText
-                      text={item.message.text}
-                      images={item.message.images}
+              {paginatedMessages.map((message) => {
+                if (message.role === "user") {
+                  return (
+                    <UserBubble
+                      key={message.id}
+                      message={message}
                       onPreviewImage={setPreviewImage}
-                      onOpenExternal={(url) => api.app.openExternal(url)}
                       onOpenFile={openFilePath}
-                      isStreaming={item.message.id === streamingMessageId}
+                      onResendUserMessage={resendUserMessage}
+                      onEditMessage={editMessage}
+                      onDeleteMessage={deleteMessage}
+                      isLastUserMessage={message.id === lastUserMessageId}
+                      validCommandNames={validCommandNames}
+                      validFilePaths={validFilePaths}
                     />
-                    {turnFileSummaryByMessage[item.message.id]?.length > 0 && (
-                      <SessionFileSummary
-                        files={turnFileSummaryByMessage[item.message.id]}
+                  );
+                }
+                if (message.role === "assistant") {
+                  return (
+                    <Fragment key={message.id}>
+                      <AssistantText
+                        text={message.text}
+                        images={message.images}
+                        onPreviewImage={setPreviewImage}
+                        onOpenExternal={(url) => api.app.openExternal(url)}
                         onOpenFile={openFilePath}
-                        onDiffFile={diffFilePath}
+                        isStreaming={message.id === streamingMessageId}
+                        showThinking={settings.showThinking}
                       />
-                    )}
-                  </Fragment>
-                ),
-              )}
+                      {turnFileSummaryByMessage[message.id]?.length > 0 && (
+                        <SessionFileSummary
+                          files={turnFileSummaryByMessage[message.id]}
+                          onOpenFile={openFilePath}
+                          onDiffFile={diffFilePath}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                }
+                if (message.role === "tool") {
+                  return (
+                    <ToolCard key={message.id} message={message} />
+                  );
+                }
+                if (message.role === "error") {
+                  return (
+                    <DiagnosticMessageCard key={message.id} message={message} />
+                  );
+                }
+                if (message.role === "system") {
+                  const meta = message.meta as any;
+                  if (meta?.type === "askQuestion") {
+                    return (
+                      <AskQuestionCard key={message.id} message={message} onRespond={(response) => {
+                        const req = meta.uiRequest;
+                        if (req && activeAgentId) api.agents.sendUiResponse(activeAgentId, req.requestId, response);
+                      }} />
+                    );
+                  }
+                  if (meta?.type === "compaction") {
+                    return (
+                      <CompactionCard key={message.id} message={message} />
+                    );
+                  }
+                  return (
+                    <DiagnosticMessageCard key={message.id} message={message} />
+                  );
+                }
+                return null;
+              })}
               {isAwaitingAssistant && (
                 <>
                   <ThinkingIndicator

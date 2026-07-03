@@ -2201,6 +2201,10 @@ body.is-terminal-resizing {
 	min-width: 0;
 	margin: 0 auto;
 }
+/* 消息间间距：每条用户/助手/工具/诊断卡片之间留出呼吸空间 */
+.message-list > * + * {
+	margin-top: var(--space-4);
+}
 /* 会话定位跳转命中时的短暂高亮，帮助用户在长会话中识别落点。 */
 @keyframes messageJumpHighlight {
 	0% { box-shadow: 0 0 0 3px var(--color-accent); }
@@ -2913,9 +2917,6 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	font-size: var(--font-size-body);
 	line-height: 1.62;
 }
-.assistant-text:not(:first-child) {
-	margin-top: var(--space-2);
-}
 
 /* ---------- 诊断卡片：错误 / RPC / 系统状态 ---------- */
 .diagnostic-card {
@@ -3377,7 +3378,7 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-2);
-	margin: 0 0 var(--space-4) var(--space-4);
+	margin: 0 0 0 var(--space-4);
 	padding: 8px 12px;
 	border: 1px solid var(--color-border-subtle);
 	border-radius: var(--radius-md);
@@ -3432,7 +3433,7 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	width: 100%;
 	max-width: 100%;
 	min-width: 0;
-	margin: 0 0 var(--space-5);
+	margin: 0;
 }
 .user-turn-attachments {
 	display: flex;

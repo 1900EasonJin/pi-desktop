@@ -3,6 +3,7 @@ import {
 	memo,
 	useEffect,
 	useId,
+	useMemo,
 	useRef,
 	useState,
 	type CSSProperties,
@@ -1947,11 +1948,48 @@ export const AssistantText = memo(
 		/** 当前消息是否正在流式追加。为 true 时走轻量渲染路径，跳过 KaTeX 数学解析与
 		 *  mermaid 图渲染，避免每个 token 都对不断增长的全量正文调用重型插件导致主线程卡死。 */
 		isStreaming?: boolean;
+		/** 是否内联展开 thinking 段，替代旧的折叠卡片外挂模式。
+		 *  为 true 时 text 中的 <thinking> 标签保留在原位，渲染为斜体次级色块。 */
+		showThinking?: boolean;
 	}) {
-		// 统一在此处清理 ANSI 转义码与 <thinking> 标签，调用方可直接传原始消息文本
-		const cleanText = stripThinkingTags(stripAnsi(props.text));
-		// 流式期间用轻量管线（仅 GFM + 路径链接化），回答结束后切回含数学/图表的完整渲染。
+		// 统一此处清理 ANSI 转义码；调用方根据 showThinking 决定是否保留 thinking 标签。
+		const rawText = stripAnsi(props.text);
 		const streaming = Boolean(props.isStreaming);
+		const renderInlineThinking = props.showThinking && /<thinking>/i.test(rawText);
+		// 当 showThinking 时按 thinking 标签切分，把每段渲染为独立 markdown 块
+		const segments = useMemo(() => {
+			if (!renderInlineThinking) return null;
+			const parts = rawText.split(/(<thinking>[\s\S]*?<\/thinking>)/g);
+			return parts
+				.map((part) => {
+					const m = part.match(/^<thinking>([\s\S]*)<\/thinking>$/);
+					if (m) {
+						const content = m[1].trim();
+						return content ? { type: "thinking" as const, content } : null;
+					}
+					const trimmed = part.trim();
+					return trimmed ? { type: "text" as const, content: trimmed } : null;
+				})
+				.filter(Boolean) as Array<{ type: "text" | "thinking"; content: string }>;
+		}, [renderInlineThinking, rawText]);
+		// 不展开时仍剥离 thinking 标签，保持旧行为
+		const cleanText = !renderInlineThinking ? stripThinkingTags(rawText) : "";
+
+		const sharedRemarkPlugins = streaming
+			? [remarkGfm, remarkLinkifyPaths]
+			: [remarkGfm, remarkMath, remarkLinkifyPaths];
+		const sharedRehypePlugins = streaming ? [] : [rehypeKatex];
+		const sharedComponents = {
+			pre: streaming ? StreamingCodeBlock : CodeBlock,
+			span: MathSpan,
+			a: (linkProps: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+				<MarkdownLink
+					{...linkProps}
+					onOpenExternal={props.onOpenExternal}
+					onOpenFile={props.onOpenFile}
+				/>
+			),
+		};
 		return (
 			<div className="assistant-text markdown-body">
 				{props.images && props.images.length > 0 && (
@@ -1967,38 +2005,50 @@ export const AssistantText = memo(
 						))}
 					</div>
 				)}
-				<ReactMarkdown
-					remarkPlugins={
-						streaming
-							? [remarkGfm, remarkLinkifyPaths]
-							: [remarkGfm, remarkMath, remarkLinkifyPaths]
-					}
-					rehypePlugins={streaming ? [] : [rehypeKatex]}
-					urlTransform={markdownUrlTransform}
-					components={{
-						pre: streaming ? StreamingCodeBlock : CodeBlock,
-						span: MathSpan,
-						a: (linkProps) => (
-							<MarkdownLink
-								{...linkProps}
-								onOpenExternal={props.onOpenExternal}
-								onOpenFile={props.onOpenFile}
-							/>
-						),
-					}}
-				>
-					{cleanText}
-				</ReactMarkdown>
+				{segments
+					? segments.map((seg: { type: "text" | "thinking"; content: string }, i: number) =>
+							seg.type === "thinking" ? (
+								<div key={i} className="thinking-inline">
+									<ReactMarkdown
+										remarkPlugins={sharedRemarkPlugins}
+										rehypePlugins={sharedRehypePlugins}
+										urlTransform={markdownUrlTransform}
+										components={sharedComponents}
+									>
+										{seg.content}
+									</ReactMarkdown>
+								</div>
+							) : (
+								<ReactMarkdown
+									key={i}
+									remarkPlugins={sharedRemarkPlugins}
+									rehypePlugins={sharedRehypePlugins}
+									urlTransform={markdownUrlTransform}
+									components={sharedComponents}
+								>
+									{seg.content}
+								</ReactMarkdown>
+							),
+					  )
+					: cleanText && (
+							<ReactMarkdown
+								remarkPlugins={sharedRemarkPlugins}
+								rehypePlugins={sharedRehypePlugins}
+								urlTransform={markdownUrlTransform}
+								components={sharedComponents}
+							>
+								{cleanText}
+							</ReactMarkdown>
+					  )}
 			</div>
 		);
 	},
-	// 自定义比较：文本、流式标记、图片一致时跳过重渲染。回调函数（onPreviewImage/onOpenExternal/
-	// onOpenFile）行为稳定（读 ref 或 setState），不参与比较，避免 App 每次渲染新建内联箭头
-	// 函数导致 memo 失效——历史消息在流式期间因此不再重复解析 Markdown，从根上消除卡顿。
+	// 自定义比较：文本、流式标记、图片、思考显示一致时跳过重渲染。
 	(prev, next) =>
 		prev.text === next.text &&
 		prev.isStreaming === next.isStreaming &&
-		prev.images === next.images,
+		prev.images === next.images &&
+		prev.showThinking === next.showThinking,
 );
 
 /** 一轮 AI 回答的扁平容器：左侧竖线聚合，内含思考/工具/正文/文件摘要。
