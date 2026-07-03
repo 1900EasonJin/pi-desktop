@@ -2201,8 +2201,9 @@ body.is-terminal-resizing {
 	min-width: 0;
 	margin: 0 auto;
 }
-/* 消息间间距：每条用户/助手/工具/诊断卡片之间留出呼吸空间 */
-.message-list > * + * {
+/* 消息间间距：每条用户/助手/工具/诊断卡片之间留出呼吸空间
+   双类名提升特异性，确保不被组件自身 margin 覆盖 */
+.message-list.message-list > * + * {
 	margin-top: var(--space-4);
 }
 /* 会话定位跳转命中时的短暂高亮，帮助用户在长会话中识别落点。 */
