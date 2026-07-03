@@ -48,13 +48,17 @@ export class PiProcess extends EventEmitter {
     return this.diagnostics;
   }
 
-  start(sessionPath?: string) {
+  start(sessionPath?: string, trustOverride?: "approve" | "no-approve") {
     if (this.proc) return this.rpc!;
 
-    // 信任确认由内置 pi-deck-project-trust 扩展处理，不再静默 --approve。
-    // PiDeck 桌面端通过 ctx.ui.select 弹窗让用户选择信任策略。
+    // 信任确认由桌面端 AgentManager.ensureProjectTrust 在启动 pi 前完成，不再静默 --approve。
+    // pi 在 RPC 模式下 project_trust 事件 hasUI 恒为 false，故信任弹窗由桌面端自行处理。
     const args = ["--mode", "rpc"];
     if (sessionPath) args.push("--session", sessionPath);
+    // 信任覆盖：用 --approve/--no-approve 覆盖 pi 的 trustStore 决策（本次生效，不落盘）。
+    // trust-session 用 --approve 让 pi 本次加载项目资源；deny 用 --no-approve 以不信任模式启动。
+    if (trustOverride === "approve") args.push("--approve");
+    else if (trustOverride === "no-approve") args.push("--no-approve");
 
     const locator = new PiLocator();
     // 用户手动指定的 pi 路径优先于自动检测，解决 npm global、nvm 等路径未在 PATH 中的问题

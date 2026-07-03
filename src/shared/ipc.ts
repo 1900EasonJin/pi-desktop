@@ -120,6 +120,10 @@ export const ipcChannels = {
 	agentsUiRequest: "agents:ui-request",
 	/** 渲染进程 → 主进程，传递用户在 UI 请求中的响应（选中的选项、输入的文本等） */
 	agentsUiResponse: "agents:ui-response",
+	/** 项目信任确认：主进程 → 渲染进程，启动 Agent 前请求用户对含 .pi 资源的项目做信任决策 */
+	agentsTrustRequest: "agents:trust-request",
+	/** 项目信任确认：渲染进程 → 主进程，回传用户的信任选择（trust-remember/trust-session/deny） */
+	agentsTrustResponse: "agents:trust-response",
 
 	configGetModels: "config:get-models",
 	configGetAuth: "config:get-auth",

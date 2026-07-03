@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { normalize, join } from "node:path";
+import { normalize, join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { net } from "electron";
 import type { ConfigFileDiagnostic, ConfigFileReadResult } from "../../shared/types";
@@ -114,6 +114,50 @@ export class ConfigManager {
 			...trustConfig.parsed,
 			[normalizedPath]: true,
 		});
+	}
+
+	/**
+	 * 查询某项目目录的信任决策，沿父目录链查找最近记录（复刻 pi 的 findNearestTrustEntry 语义）。
+	 * pi 的信任语义是父目录决策继承到子目录，例如 trust.json 记录 "C:\\Users": true，
+	 * 则 C:\\Users\\14012\\project 同样视为已信任。返回 true/false；未记录返回 null。
+	 */
+	async getProjectTrustDecision(cwd: string): Promise<boolean | null> {
+		const trustConfig = await this.getTrustConfig();
+		if (trustConfig.diagnostic) return null;
+		return this.findNearestTrustEntry(trustConfig.parsed, cwd);
+	}
+
+	/**
+	 * 写入某项目目录的信任决策（覆盖该路径既有值）。
+	 * 用户在信任弹窗选择“信任并记住”或“不信任”后调用，持久化决策避免重复打扰。
+	 */
+	async setProjectTrustDecision(cwd: string, decision: boolean): Promise<void> {
+		const trustConfig = await this.getTrustConfig();
+		if (trustConfig.diagnostic) return;
+		const key = normalize(cwd);
+		await this.writeJsonFile("trust.json", {
+			...trustConfig.parsed,
+			[key]: decision,
+		});
+	}
+
+	/**
+	 * 沿父目录链查找最近的信任记录。key 比较统一走 normalizeTrustPathKey，
+	 * 与 ensureTrustedDirectory 的去重逻辑保持一致，避免大小写/分隔符差异导致漏查。
+	 */
+	private findNearestTrustEntry(data: Record<string, boolean>, cwd: string): boolean | null {
+		const normalized = new Map<string, boolean>();
+		for (const [key, value] of Object.entries(data)) {
+			normalized.set(this.normalizeTrustPathKey(key), value);
+		}
+		let current = this.normalizeTrustPathKey(cwd);
+		while (true) {
+			const value = normalized.get(current);
+			if (value === true || value === false) return value;
+			const parent = dirname(current);
+			if (parent === current) return null;
+			current = parent;
+		}
 	}
 
 	private normalizeTrustPathKey(path: string) {
