@@ -573,9 +573,10 @@ select:focus-visible {
 }
 
 .wechat-shell {
-	--list-width: 250px;
-	--list-expanded-width: 250px;
-	--list-hover-width: 320px;
+	position: relative;
+	--list-width: 190px;
+	--list-expanded-width: 190px;
+	--list-hover-width: 250px;
 	--drawer-width: 270px;
 	/* 抽屉列下限 / 分隔条列宽由 JS 按 open+collapsed 状态注入：
 	   关闭或折叠时为 0，展开时抽屉下限 260px、分隔条 6px。
@@ -3367,6 +3368,8 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 .thinking-card.streaming {
 	border-top: 1px solid var(--color-accent);
 	border-color: var(--color-accent);
+	/* 呼吸脉冲：卡片边框在高亮与柔和之间平滑过渡，即使文本静止也能感知活跃 */
+	animation: thinking-border-pulse 1.8s ease-in-out infinite;
 }
 .thinking-card.streaming .thinking-card-content {
 	max-height: 240px;
@@ -3384,13 +3387,24 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0; }
 }
+/* 边框呼吸脉冲：脉冲幅度更大，确保即使余光扫过也能感知动画 */
+@keyframes thinking-border-pulse {
+	0%, 100% {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 22%, transparent);
+	}
+	50% {
+		border-color: color-mix(in srgb, var(--color-accent) 15%, var(--color-border-subtle));
+		box-shadow: 0 0 2px color-mix(in srgb, var(--color-accent) 6%, transparent);
+	}
+}
 
 /* ---------- 流式等待：ThinkingIndicator ---------- */
 .thinking-indicator {
 	display: inline-flex;
 	align-items: center;
 	gap: var(--space-2);
-	margin: 0 0 0 var(--space-4);
+	margin: 0;
 	padding: 8px 12px;
 	border: 1px solid var(--color-border-subtle);
 	border-radius: var(--radius-md);
@@ -3435,6 +3449,17 @@ body.is-terminal-resizing .terminal-resize-handle::before {
 }
 .thinking-indicator[data-kind="executing"] .thinking-indicator-dots span {
 	background: var(--color-warning, #d97706);
+}
+/* 通用等待变体：只显示三点动画，无标签文本 */
+.thinking-indicator[data-kind="waiting"] {
+	border-color: transparent;
+	background: transparent;
+	padding: 4px 0;
+	margin: var(--space-4) 0 0 0;
+}
+.thinking-indicator[data-kind="waiting"] .thinking-indicator-dots span {
+	background: var(--color-text-tertiary, var(--color-text-secondary));
+	opacity: 0.4;
 }
 
 /* ---------- 用户消息：UserBubble（右对齐窄气泡） ---------- */
@@ -5561,8 +5586,9 @@ body.is-composer-resizing .composer-resize-handle::after {
 }
 .outline-hover {
 	position: absolute;
-	right: 18px;
-	z-index: 8;
+	right: calc(6px + max(var(--drawer-col-w), min(var(--drawer-width), 38vw)));
+	top: calc(var(--outline-top, 180px) + var(--window-drag-height, 0px));
+	z-index: 15;
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
@@ -5820,7 +5846,7 @@ body.is-composer-resizing .composer-resize-handle::after {
 	color: var(--color-text-tertiary);
 	font-size: var(--font-size-caption);
 }
-@media (max-width: 1280px) {
+@media (max-width: 640px) {
 	.outline-hover {
 		display: none;
 	}
@@ -6101,28 +6127,7 @@ body.is-composer-resizing .composer-resize-handle::after {
 	50% { opacity: 0.65; }
 }
 
-/* 全局运行指示器：取代消息列表中的 ThinkingIndicator，在工具栏中常驻显示 */
-.composer-running-indicator {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	margin-left: auto;
-	color: var(--color-accent);
-	font-size: var(--font-size-caption);
-	font-family: var(--font-family-base);
-	user-select: none;
-}
-.running-dot {
-	width: 7px;
-	height: 7px;
-	border-radius: var(--radius-pill);
-	background: var(--color-accent);
-	animation: runningDotPulse 1.2s ease-in-out infinite;
-}
-@keyframes runningDotPulse {
-	0%, 100% { opacity: 0.3; transform: scale(0.85); }
-	50% { opacity: 1; transform: scale(1); }
-}
+
 
 /* ---- 输入框命令模式指示 ---- */
 .composer-box textarea.bang,
