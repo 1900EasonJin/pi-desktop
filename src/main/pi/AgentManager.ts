@@ -1,6 +1,6 @@
 import { app, type BrowserWindow, Notification } from "electron";
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, copyFile, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -861,15 +861,32 @@ export class AgentManager {
 	 * 使用 pi 的 switch_session RPC 重载当前会话，无需重启进程。
 	 * 流程：编辑 JSONL → 调用 switch_session（同路径）→ pi 从文件重建会话 → loadMessages 刷新。
 	 * 比 restart 快得多（不创建新进程）。
+	 *
+	 * 注意：switch_session 传入同路径时 pi RPC 可能不做实际重读（缓存），
+	 * 因此通过临时文件绕开缓存：复制到临时路径 → switch 到临时路径 →
+	 * 切换回原路径 → 清理临时文件。
 	 */
 	private async reloadSession(agentId: string) {
 		const runtime = this.requireRuntime(agentId);
 		const sessionPath = runtime.tab.sessionPath;
 		if (!sessionPath) throw new Error("Session path not available for reload");
-		await runtime.process.client.request({
-			type: "switch_session",
-			sessionPath,
-		}, 60_000);
+
+		// 用临时文件绕过 pi RPC 的同路径缓存
+		const tempPath = sessionPath + ".reload";
+		try {
+			await copyFile(sessionPath, tempPath);
+			await runtime.process.client.request({
+				type: "switch_session",
+				sessionPath: tempPath,
+			}, 60_000);
+			// 换回原路径（此时已经是修改后的文件）
+			await runtime.process.client.request({
+				type: "switch_session",
+				sessionPath,
+			}, 60_000);
+		} finally {
+			await unlink(tempPath).catch(() => {});
+		}
 		await this.loadMessages(agentId);
 	}
 
@@ -884,9 +901,12 @@ export class AgentManager {
 	 *   - assistant：只计入 extractText 结果非空的行（纯工具调用被 .filter(m => m.text.trim()) 移除）
 	 *   - toolResult：始终计入（"✓/✗ toolName" 非空）
 	 * 返回 JSONL 行号（0-based），若找不到返回 -1。
+	 *
+	 * @param targetSeq 可选，_piDeckMsgSeq 值，当 count 方式找不到时作为内容级兜底扫描。
 	 */
-	private findJsonlLineForMessage(lines: string[], msgIndex: number): number {
+	private findJsonlLineForMessage(lines: string[], msgIndex: number, targetSeq?: number): number {
 		let desktopCount = 0;
+		let seqFallback = -1;
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (!line.trim()) continue;
@@ -903,13 +923,22 @@ export class AgentManager {
 				} else if (role === "toolResult") {
 					counts = true;
 				}
+				// 按 _piDeckMsgSeq 内容匹配（兜底：删除后计数偏移导致 count 不到 target）
+				if (
+					targetSeq != null &&
+					seqFallback === -1 &&
+					typeof msg?._piDeckMsgSeq === "number" &&
+					msg._piDeckMsgSeq === targetSeq
+				) {
+					seqFallback = i;
+				}
 			} catch { /* 跳过无法解析的行 */ }
 			if (counts) {
 				if (desktopCount === msgIndex) return i;
 				desktopCount++;
 			}
 		}
-		return -1;
+		return seqFallback;
 	}
 
 	/**
@@ -930,12 +959,12 @@ export class AgentManager {
 		const msg = messages.find((m) => m.id === messageId);
 		if (!msg) throw new Error("Message not found");
 
-		// 用 desktop 消息上的 _piDeckMsgSeq 定位 JSONL 行号
-		// 尝试用持久化的 _piDeckMsgSeq 定位；若没有（首次编辑或旧会话）则按桌面消息索引扫描
+		// _piDeckMsgSeq 是初次加载时的计数位置，删除会在 JSONL 中留下空行，
+		// 导致计数偏移，因此 findJsonlLineForMessage 必须用当前桌面索引 msgIndex。
+		// 同时将 seq 作为 targetSeq 传入，供内容级兜底扫描。
 		const seq = typeof msg.meta?._piDeckMsgSeq === "number" ? msg.meta._piDeckMsgSeq : -1;
 		const msgIndex = messages.indexOf(msg);
-		const jsonLineIdx = seq >= 0 ? seq : msgIndex;
-		const jsonlLine = this.findJsonlLineForMessage(lines, jsonLineIdx);
+		const jsonlLine = this.findJsonlLineForMessage(lines, msgIndex, seq >= 0 ? seq : undefined);
 		if (jsonlLine === -1) throw new Error("Message not found in session file");
 
 		const entry = JSON.parse(lines[jsonlLine]) as { message?: Record<string, any> };
@@ -957,7 +986,8 @@ export class AgentManager {
 			throw new Error("Only user and assistant messages can be edited");
 		}
 
-		// 持久化 _piDeckMsgSeq 到 JSONL 的 message 对象上，后续 reload 后可直接用 O(1) 定位
+		// 持久化 _piDeckMsgSeq 到 JSONL 的 message 对象上，后续 reload 后可直接在
+		// convertAgentMessages 中读回，保持计数不因重载而跳变。
 		entry.message = { ...entry.message!, _piDeckMsgSeq: seq >= 0 ? seq : msgIndex };
 
 		// 写回 JSONL
@@ -970,7 +1000,21 @@ export class AgentManager {
 		this.messages.set(agentId, newMessages);
 		this.scheduleMessageEmit(agentId, true);
 
-		await this.reloadSession(agentId);
+		// 重载 pi RPC 会话（让 pi 感知到编辑后的文本）
+		// 如果 reloadSession 失败或返回了重载前的状态（pi RPC 缓存），
+		// 下面的 re-apply 确保桌面端始终显示编辑后的内容。
+		try {
+			await this.reloadSession(agentId);
+		} catch {
+			// reload 失败不影响桌面端已生效的编辑
+		}
+		// 在 reloadSession（可能返回 pi 的旧状态）之上重新应用编辑
+		const afterReload = this.messages.get(agentId);
+		if (afterReload) {
+			const reapplied = afterReload.map((m) => (m.id === messageId ? newMsg : m));
+			this.messages.set(agentId, reapplied);
+			this.scheduleMessageEmit(agentId, true);
+		}
 	}
 
 	/**
@@ -991,11 +1035,11 @@ export class AgentManager {
 		const msg = messages.find((m) => m.id === messageId);
 		if (!msg) throw new Error("Message not found");
 
-		// 尝试用持久化的 _piDeckMsgSeq 定位；若没有则按桌面消息索引扫描
+		// _piDeckMsgSeq 是初次加载时的计数位置，删除会在 JSONL 中留下空行，
+		// 导致计数偏移，因此必须用当前桌面索引 msgIndex 而非 seq。
 		const seq = typeof msg.meta?._piDeckMsgSeq === "number" ? msg.meta._piDeckMsgSeq : -1;
 		const msgIndex = messages.indexOf(msg);
-		const jsonLineIdx = seq >= 0 ? seq : msgIndex;
-		const jsonlLine = this.findJsonlLineForMessage(lines, jsonLineIdx);
+		const jsonlLine = this.findJsonlLineForMessage(lines, msgIndex, seq >= 0 ? seq : undefined);
 		if (jsonlLine === -1) throw new Error("Message not found in session file");
 
 		// 从 JSONL 移除该行（置空保持行号稳定，避免 session tree 错乱）
@@ -1008,7 +1052,21 @@ export class AgentManager {
 		this.messages.set(agentId, messages);
 		this.scheduleMessageEmit(agentId, true);
 
-		await this.reloadSession(agentId);
+		// 重载 pi RPC 会话（让 pi 感知到文件变更）
+		// 如果 reloadSession 失败或返回的仍是重载前的状态（pi RPC 缓存），
+		// 下面的 re-apply 确保桌面端始终持有正确的、不含已删除消息的状态。
+		try {
+			await this.reloadSession(agentId);
+		} catch {
+			// reload 失败不影响桌面端已生效的删除
+		}
+		// 在 reloadSession（可能返回 pi 的旧状态）之上重新应用删除
+		const afterReload = this.messages.get(agentId);
+		if (afterReload) {
+			const deduped = afterReload.filter((m) => m.id !== messageId);
+			this.messages.set(agentId, deduped);
+			this.scheduleMessageEmit(agentId, true);
+		}
 	}
 
 	/**
