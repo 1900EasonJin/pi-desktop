@@ -280,7 +280,7 @@ export function SettingsModal(props: {
 									<div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", maxWidth: 480 }}>
 										<input
 											type="range"
-											min="50"
+											min="800"
 											max="1400"
 											step="50"
 											value={props.settings.contentMaxWidth}
