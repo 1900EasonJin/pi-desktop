@@ -2115,6 +2115,22 @@ export class AgentManager {
 		// args 可能来自 event.args（对象）或 existing.meta.args（已序列化的 JSON 字符串）。
 		// 如果是后者（如 tool_execution_end 不带 args），直接复用已有字符串避免 double encoding。
 		const argsMeta = typeof args === "string" ? args : this.truncateForDetail(this.safeJson(args));
+		// 提取 ask_question 详情用于渲染提问卡片；历史会话恢复依赖此字段重建交互式 UI。
+		const askDetails =
+			toolName === "ask_question" &&
+				result && typeof result === "object" &&
+				(result as any).details?.question
+			? (result as any).details
+			: undefined;
+		const askCard = askDetails
+			? {
+					question: askDetails.question,
+					type: askDetails.type,
+					answered: askDetails.answered,
+					answer: askDetails.answer,
+					options: askDetails.options,
+				}
+			: undefined;
 		const meta = {
 			status,
 			toolName,
@@ -2126,6 +2142,7 @@ export class AgentManager {
 			isError,
 			detailText,
 			originalContent,
+			...(askCard ? { _askCard: askCard } : {}),
 		};
 
 		if (existing) {
@@ -2382,6 +2399,17 @@ export class AgentManager {
 						result,
 						isError,
 					);
+					// 从历史工具结果中提取 ask_question 详情，用于渲染提问卡片。
+					const askCard =
+						toolName === "ask_question" && typed.details?.question
+							? {
+									question: typed.details.question,
+									type: typed.details.type,
+									answered: typed.details.answered,
+									answer: typed.details.answer,
+									options: typed.details.options,
+								}
+							: undefined;
 					entryIndex++;
 					return [{
 						id: `${agentId}-history-${currentEntryId ?? index}`,
@@ -2404,6 +2432,7 @@ export class AgentManager {
 							...(originalContent && /write|edit|create|patch/i.test(toolName)
 								? { originalContent }
 								: {}),
+							...(askCard ? { _askCard: askCard } : {}),
 						},
 					}];
 				}
