@@ -50,7 +50,7 @@ export class ProjectStore {
     return this.add(result.filePaths[0]);
   }
 
-  async add(path: string) {
+  async add(path: string, worktreeParentId?: string) {
     const existing = this.projects.find(project => project.path === path);
     if (existing) {
       existing.lastOpenedAt = Date.now();
@@ -64,6 +64,7 @@ export class ProjectStore {
       path,
       lastOpenedAt: Date.now(),
       sortOrder: this.nextSortOrder(),
+      ...(worktreeParentId ? { worktreeParentId } : {}),
     };
 
     this.projects.push(project);
@@ -165,6 +166,29 @@ export class ProjectStore {
     return typeof project.sortOrder === "number" && !Number.isNaN(project.sortOrder)
       ? project.sortOrder
       : Number.MAX_SAFE_INTEGER;
+  }
+
+  /** 仅返回顶级项目（非 worktree 子项目），用于侧栏主列表 */
+  listRoot() {
+    return this.list().filter(p => !p.worktreeParentId);
+  }
+
+  /** 获取指定父项目的所有 worktree 子项目 */
+  listWorktreeChildren(parentId: string) {
+    return this.list().filter(p => p.worktreeParentId === parentId);
+  }
+
+  /** 按路径查找项目 */
+  findByPath(path: string) {
+    return this.projects.find(project => project.path === path) ?? null;
+  }
+
+  async toggleWorktreeEnabled(id: string) {
+    const project = this.get(id);
+    if (!project) return null;
+    project.worktreeEnabled = !project.worktreeEnabled;
+    await this.save();
+    return project;
   }
 
   private isChatProject(project: Project) {

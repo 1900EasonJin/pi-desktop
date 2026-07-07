@@ -76,6 +76,7 @@ import { OpenCodeSessionImporter } from "./sessions/OpenCodeSessionImporter";
 import { SettingsStore } from "./settings/SettingsStore";
 import { applyDesktopProxy } from "./settings/DesktopProxy";
 import { GitService } from "./git/GitService";
+import { WorktreeService } from "./git/WorktreeService";
 import { ConfigManager } from "./config/ConfigManager";
 import { TerminalSessionManager } from "./terminal/TerminalSessionManager";
 import { TelemetryService } from "./telemetry/TelemetryService";
@@ -120,6 +121,7 @@ let codexSessionImporter: CodexSessionImporter;
 let claudeSessionImporter: ClaudeSessionImporter;
 let openCodeSessionImporter: OpenCodeSessionImporter;
 let settingsStore: SettingsStore;
+let worktreeService: WorktreeService;
 let gitService: GitService;
 let piLocator: PiLocator;
 let agentManager: AgentManager;
@@ -1149,6 +1151,42 @@ function registerIpc() {
 		void appLogger.info("project-resource", "Project extension toggled", { projectId, extensionPath, enabled });
 	});
 
+	// ── Worktree 项目管理 ──
+
+	ipcMain.handle(ipcChannels.projectsListRoot, () => {
+		return projectStore.listRoot();
+	});
+
+	ipcMain.handle(
+		ipcChannels.projectsListWorktreeChildren,
+		async (_event, parentId: string) => {
+			return projectStore.listWorktreeChildren(parentId);
+		},
+	);
+
+	ipcMain.handle(
+		ipcChannels.projectsToggleWorktreeEnabled,
+		async (_event, projectId: string) => {
+			const project = await projectStore.toggleWorktreeEnabled(projectId);
+			if (!project) throw new Error(`Project not found: ${projectId}`);
+			// 开启 worktree 模式时，自动注册已有的 git worktree
+			if (project.worktreeEnabled) {
+				try {
+					const entries = await worktreeService.list(project.path);
+					for (const wt of entries) {
+						// findByPath 返回 null 表示未注册
+						if (!projectStore.findByPath(wt.path)) {
+							await projectStore.add(wt.path, projectId);
+						}
+					}
+				} catch {
+					// worktree 查询失败不阻塞 toggle
+				}
+			}
+			return project;
+		},
+	);
+
 	ipcMain.handle(ipcChannels.filesList, async (_event, projectId: string) => {
 		const project = projectStore.get(projectId);
 		if (!project) throw new Error(`Project not found: ${projectId}`);
@@ -1438,6 +1476,33 @@ function registerIpc() {
 			const project = projectStore.get(projectId);
 			if (!project) return [];
 			return gitService.getChangedFiles(project.path);
+		},
+	);
+
+	ipcMain.handle(
+		ipcChannels.gitWorktreeList,
+		async (_event, projectId: string) => {
+			const project = projectStore.get(projectId);
+			if (!project) throw new Error(`Project not found: ${projectId}`);
+			return worktreeService.list(project.path);
+		},
+	);
+
+	ipcMain.handle(
+		ipcChannels.gitWorktreeCreate,
+		async (_event, projectId: string, branchName: string) => {
+			const project = projectStore.get(projectId);
+			if (!project) throw new Error(`Project not found: ${projectId}`);
+			return worktreeService.create(project.path, projectId, branchName);
+		},
+	);
+
+	ipcMain.handle(
+		ipcChannels.gitWorktreeRemove,
+		async (_event, projectId: string, worktreePath: string) => {
+			const project = projectStore.get(projectId);
+			if (!project) throw new Error(`Project not found: ${projectId}`);
+			return worktreeService.remove(worktreePath, project.path);
 		},
 	);
 
@@ -2086,6 +2151,7 @@ app.whenReady().then(async () => {
 	appLogger = new AppLogger();
 	rpcLogger = new RpcLogger();
 	gitService = new GitService();
+	worktreeService = new WorktreeService();
 	piLocator = new PiLocator();
 	configManager = new ConfigManager();
 	skillManager = new SkillManager();

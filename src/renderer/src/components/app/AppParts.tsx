@@ -4051,6 +4051,63 @@ export function SessionHistoryModal(props: {
 	);
 }
 
+/** 创建 git worktree 的对话框 */
+export function WorktreeCreateDialog(props: {
+	projectId: string;
+	creating: boolean;
+	onCreate: (branchName: string) => void;
+	onClose: () => void;
+}) {
+	const [name, setName] = useState("");
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		inputRef.current?.focus();
+	}, []);
+
+	return (
+		<div className="context-backdrop" onClick={props.onClose}>
+			<div
+				className="worktree-create-dialog"
+				onClick={(e) => e.stopPropagation()}
+			>
+				<h3>{t("app.worktreeCreateTitle")}</h3>
+				<input
+					ref={inputRef}
+					type="text"
+					className="worktree-create-input"
+					placeholder={t("app.worktreeCreatePlaceholder")}
+					value={name}
+					onChange={(e) => setName(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && name.trim()) {
+							props.onCreate(name.trim());
+						}
+						if (e.key === "Escape") props.onClose();
+					}}
+					disabled={props.creating}
+				/>
+				<div className="worktree-create-actions">
+					<button
+						className="worktree-create-cancel"
+						onClick={props.onClose}
+						disabled={props.creating}
+					>
+						{t("common.cancel")}
+					</button>
+					<button
+						className="worktree-create-confirm"
+						disabled={!name.trim() || props.creating}
+						onClick={() => props.onCreate(name.trim())}
+					>
+						{props.creating ? t("app.worktreeCreating") : t("app.worktreeCreate")}
+					</button>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 export function PromptSuggestions(props: {
 	prompt: string;
 	items: SuggestionItem[];
@@ -4211,8 +4268,10 @@ export function ProjectContextMenu(props: {
 	onImportOpenCodeSessions: () => void;
 	onManageProjectResources: () => void;
 	onFilterSessions: () => void;
+	onToggleWorktree: () => void;
 	onRemoveProject: () => void;
 }) {
+	const isWorktreeEnabled = props.menu.project.worktreeEnabled ?? false;
 	return (
 		<div className="context-backdrop" onClick={props.onClose}>
 			<div
@@ -4234,6 +4293,10 @@ export function ProjectContextMenu(props: {
 				<button onClick={props.onManageProjectResources}>{t("menu.projectResources")}</button>
 				<hr className="context-separator" />
 				<button onClick={props.onFilterSessions}>{t("menu.filterSessions")}</button>
+				<hr className="context-separator" />
+				<button onClick={props.onToggleWorktree}>
+					{isWorktreeEnabled ? t("menu.disableWorktree") : t("menu.enableWorktree")}
+				</button>
 				<hr className="context-separator" />
 				<button onClick={props.onRemoveProject}>{t("menu.removeProject")}</button>
 			</div>

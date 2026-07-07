@@ -209,6 +209,9 @@ export function createPreviewApi(): PiDesktopApi {
 				return projects;
 			},
 			onChanged: noop,
+			listRoot: async () => projects,
+			listWorktreeChildren: async () => [],
+			toggleWorktreeEnabled: async () => projects[0],
 		},
 		projectResources: {
 			list: async () => ({ skills: [], extensions: [] }),
@@ -286,6 +289,12 @@ export function createPreviewApi(): PiDesktopApi {
 			// 预览环境无真实 Git，返回空原始内容，差异左侧显示为空。
 			originalContent: async () => "",
 			changedFiles: async () => [],
+			worktreeList: async () => [],
+			worktreeCreate: async (_projectId, branchName) => ({
+				path: `/tmp/worktree/${branchName}`,
+				branch: branchName,
+			}),
+			worktreeRemove: async () => true,
 		},
 		logs: {
 			list: async () => [],

@@ -1290,6 +1290,164 @@ body:not(.is-list-resizing)
   );
   font-size: var(--font-size-micro);
 }
+
+/* ── Worktree 工作区 ── */
+.worktree-children {
+  margin-left: 26px;
+  border-left: 1px solid var(--color-border);
+  padding-left: 4px;
+}
+.worktree-workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: var(--font-size-small);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-business);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+}
+.worktree-workspace-header:hover {
+  background: var(--color-hover);
+}
+.worktree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: var(--font-size-small);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+.worktree-row:hover {
+  background: var(--color-hover);
+}
+.worktree-row.active {
+  color: var(--color-text-primary);
+  background: var(--color-active);
+}
+.worktree-row .worktree-branch-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.worktree-row .worktree-branch-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-business);
+}
+.worktree-row .worktree-remove {
+  opacity: 0;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.worktree-row:hover .worktree-remove {
+  opacity: 1;
+}
+.worktree-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin-top: 2px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  width: 100%;
+  box-sizing: border-box;
+  transition: color 0.15s, background 0.15s;
+}
+.worktree-create-btn:hover {
+  color: var(--color-accent);
+  background: var(--color-hover);
+}
+
+/* ── Worktree 创建对话框 ── */
+.worktree-create-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  min-width: 320px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+}
+.worktree-create-dialog h3 {
+  margin: 0 0 12px;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+.worktree-create-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  font-size: var(--font-size-base);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-input);
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.worktree-create-input:focus {
+  border-color: var(--color-accent);
+}
+.worktree-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.worktree-create-actions button {
+  padding: 6px 16px;
+  font-size: var(--font-size-small);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-primary);
+  transition: background 0.15s;
+}
+.worktree-create-actions button:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+.worktree-create-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.worktree-create-actions .worktree-create-confirm {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+.worktree-create-actions .worktree-create-confirm:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 .filter-indicator {
   margin-left: 6px;
   color: var(--color-accent);

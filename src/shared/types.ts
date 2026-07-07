@@ -6,6 +6,10 @@ export type Project = {
 	pinned?: boolean;
 	sortOrder?: number;
 	kind?: "chat";
+	/** 是否启用 git worktree 工作区模式，开启后侧栏显示分支子项 */
+	worktreeEnabled?: boolean;
+	/** 如果是 worktree 子项目，指向父项目的 id */
+	worktreeParentId?: string;
 };
 
 export const SUPPORTED_EXTERNAL_EDITORS = [
@@ -615,6 +619,12 @@ export type PiRuntimeEvent = {
 export type GitBranchInfo = {
 	current: string | null;
 	branches: string[];
+};
+
+/** git worktree --porcelain 输出解析出的单条工作树信息 */
+export type WorktreeEntry = {
+	path: string;
+	branch: string;
 };
 
 export type CreateAgentInput = {

@@ -34,8 +34,9 @@ import {
   Pin,
   Pencil,
   Square,
-  Filter,
   Terminal,
+  Filter,
+  GitBranch,
   X,
 } from "lucide-react";
 import { createPreviewApi } from "./previewApi";
@@ -94,6 +95,7 @@ import {
   TurnRow,
   AskQuestionCard,
   MultiSelectModal,
+  WorktreeCreateDialog,
   type DrawerPanel,
   type SessionModifiedFile,
 } from "./components/app/AppParts";
@@ -148,6 +150,7 @@ import type {
   OpenCodeSessionSummary,
   FileTreeNode,
   GitBranchInfo,
+  WorktreeEntry,
   ImageContent,
   PiCommand,
   PiInstallStatus,
@@ -435,6 +438,10 @@ export function App() {
   }
 
   const [projects, setProjects] = useState<Project[]>([]);
+  // 项目的 git worktree 列表：{ parentId -> WorktreeEntry[] }
+  const [worktreesByProject, setWorktreesByProject] = useState<
+    Record<string, WorktreeEntry[]>
+  >({});
   const [draggingProjectId, setDraggingProjectId] = useState<string>();
   const [dragOverProjectId, setDragOverProjectId] = useState<string>();
   const [agents, setAgents] = useState<AgentTab[]>([]);
@@ -644,6 +651,10 @@ export function App() {
     x: number;
     y: number;
     project: Project;
+  } | null>(null);
+  /** Worktree 创建弹窗 */
+  const [worktreeCreateDialog, setWorktreeCreateDialog] = useState<{
+    projectId: string;
   } | null>(null);
   /** 历史会话来源过滤（按项目）：undefined=显示全部，Record 含项目ID对应 Set */
   const [sessionSourceFilter, setSessionSourceFilter] = useState<
@@ -1238,6 +1249,8 @@ export function App() {
   const filteredProjects = useMemo(
     () =>
       projects.filter((project) => {
+        // worktree 子项目不显示在主列表中，只在父项目下以子项展示
+        if (project.worktreeParentId) return false;
         const projectSessions = sessionsByProject[project.id] ?? [];
         return (
           matches(project.name + project.path, search) ||
@@ -2257,6 +2270,24 @@ export function App() {
     const next = await api.projects.list();
     setProjects(next);
     if (!activeProjectId && next.length > 0) setActiveProjectId(next[0].id);
+    // 启动时刷新所有 worktree 项目的分支列表
+    for (const p of next) {
+      if (p.worktreeEnabled) {
+        void refreshWorktrees(p.id);
+      }
+    }
+  }
+
+  async function refreshWorktrees(projectId: string) {
+    try {
+      const entries = await api.git.worktreeList(projectId);
+      setWorktreesByProject((prev) => ({ ...prev, [projectId]: entries }));
+      // 刷新项目列表（可能已有新注册的 worktree 子项目）
+      const next = await api.projects.list();
+      setProjects(next);
+    } catch {
+      setWorktreesByProject((prev) => ({ ...prev, [projectId]: [] }));
+    }
   }
 
   async function refreshSessions(projectId = activeProjectId) {
@@ -3934,6 +3965,33 @@ ${goalTextRef.current}
     }
   }
 
+  /** 创建新的 git worktree 工作区 */
+  async function createWorktree(projectId: string, branchName: string) {
+    try {
+      const result = await api.git.worktreeCreate(projectId, branchName);
+      // 刷新项目列表（新 worktree 已注册为项目）
+      const next = await api.projects.list();
+      setProjects(next);
+      // 刷新 worktree 列表
+      await refreshWorktrees(projectId);
+      return result;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  /** 删除 worktree 工作区 */
+  async function removeWorktree(parentProjectId: string, worktreePath: string) {
+    try {
+      await api.git.worktreeRemove(parentProjectId, worktreePath);
+      const next = await api.projects.list();
+      setProjects(next);
+      await refreshWorktrees(parentProjectId);
+    } catch (e) {
+      console.error('Failed to remove worktree', e);
+    }
+  }
+
   function openDrawer(panel: DrawerPanel) {
     if (drawerPinned && panel !== drawerPinnedPanel) return;
     if (panel === "sessions" && activeProjectId) {
@@ -4224,7 +4282,7 @@ ${goalTextRef.current}
               sessionLoadingByProject[project.id],
             );
             const hasProjectChildren =
-              projectDisplay.children.length > 0 || projectSessionsLoading;
+              projectDisplay.children.length > 0 || projectSessionsLoading || !!project.worktreeEnabled;
             const isCollapsed = collapsedProjects.has(project.id);
             const isDraggingProject = draggingProjectId === project.id;
             const isProjectDropTarget = dragOverProjectId === project.id;
@@ -4380,6 +4438,87 @@ ${goalTextRef.current}
                     )}
                   </span>
                 </button>
+                {!isCollapsed && project.worktreeEnabled && (
+                  <div className="worktree-children">
+                    {/* 主工作区（当前分支），点击切换回父项目查看会话 */}
+                    <button
+                      className="worktree-workspace-header"
+                      onClick={() => {
+                        setActiveProjectId(project.id);
+                        setActiveAgentId(undefined);
+                      }}
+                    >
+                      <GitBranch size={12} />
+                      <span>{gitInfo.current || "main"}</span>
+                    </button>
+                    {(() => {
+                      // 合并 git worktree 列表和已注册的子项目，
+                      // 确保即使 git 不可用时也能显示 worktree 子项目。
+                      const wtEntries = worktreesByProject[project.id] ?? [];
+                      const childProjects = projects.filter(p => p.worktreeParentId === project.id);
+                      const merged = [...wtEntries];
+                      for (const cp of childProjects) {
+                        if (!merged.some(e => e.path === cp.path)) {
+                          merged.push({ path: cp.path, branch: cp.name });
+                        }
+                      }
+                      return merged;
+                    })().map((wt) => {
+                      const childProject = projects.find(p => p.path === wt.path);
+                      const isActive = childProject?.id === activeProjectId;
+                      return (
+                        <button
+                          key={wt.path}
+                          className={`conversation worktree-row${isActive ? " active" : ""}`}
+                          onClick={() => {
+                            if (childProject) {
+                              setActiveProjectId(childProject.id);
+                              setActiveAgentId(undefined);
+                            }
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            if (childProject) {
+                              setProjectMenu({
+                                ...adjustMenuPos(e.clientX, e.clientY, 200, 320),
+                                project: childProject,
+                              });
+                            }
+                          }}
+                          title={wt.path}
+                        >
+                          <span className="worktree-branch-icon">
+                            <GitBranch size={12} />
+                          </span>
+                          <span className="worktree-branch-name">{wt.branch}</span>
+                          {childProject && (
+                            <span
+                              className="project-action worktree-remove"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void removeWorktree(project.id, wt.path);
+                              }}
+                              title={t("menu.removeProject")}
+                            >
+                              <Trash2 size={12} />
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                    <button
+                      className="worktree-create-btn"
+                      onClick={() => {
+                        setWorktreeCreateDialog({
+                          projectId: project.id,
+                        });
+                      }}
+                    >
+                      <Plus size={12} />
+                      <span>{t("app.worktreeNew")}</span>
+                    </button>
+                  </div>
+                )}
                 {!isCollapsed &&
                   projectDisplay.visibleChildren.map((child) => {
                     const subagentGroupKey = `${project.id}:${child.key}`;
@@ -5530,6 +5669,22 @@ ${goalTextRef.current}
             });
             setProjectMenu(null);
           }}
+          onToggleWorktree={async () => {
+            const project = projectMenu.project;
+            setProjectMenu(null);
+            try {
+              const updated = await api.projects.toggleWorktreeEnabled(project.id);
+              if (updated) {
+                setProjects(prev => prev.map(p => p.id === updated.id ? updated : p));
+                // 开启后立即扫描 worktree
+                if (updated.worktreeEnabled) {
+                  void refreshWorktrees(updated.id);
+                }
+              }
+            } catch (e) {
+              console.error('Toggle worktree failed', e);
+            }
+          }}
           onRemoveProject={async () => {
             const project = projectMenu.project;
             setProjectMenu(null);
@@ -5681,6 +5836,17 @@ ${goalTextRef.current}
       )}
 
       {toast && <div className="toast">{toast}</div>}
+      {worktreeCreateDialog && (
+        <WorktreeCreateDialog
+          projectId={worktreeCreateDialog.projectId}
+          creating={false}
+          onCreate={async (branchName) => {
+            await createWorktree(worktreeCreateDialog.projectId, branchName);
+            setWorktreeCreateDialog(null);
+          }}
+          onClose={() => setWorktreeCreateDialog(null)}
+        />
+      )}
       {environmentDialog && (
         <EnvironmentDialog
           status={piStatus}

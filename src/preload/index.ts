@@ -42,6 +42,7 @@ import type {
 	FileTreeNode,
 	ForkMessage,
 	GitBranchInfo,
+	WorktreeEntry,
 	PiCliUpdateResult,
 	PiCommand,
 	PiExtensionListResult,
@@ -94,6 +95,21 @@ const api = {
 			) as Promise<Project[]>,
 		onChanged: (callback: (projects: Project[]) => void) =>
 			subscribe(ipcChannels.projectsChanged, callback),
+		// 仅返回顶级项目（不含 worktree 子项目）
+		listRoot: () =>
+			ipcRenderer.invoke(ipcChannels.projectsListRoot) as Promise<Project[]>,
+		// 获取指定父项目的所有 worktree 子项目
+		listWorktreeChildren: (parentId: string) =>
+			ipcRenderer.invoke(
+				ipcChannels.projectsListWorktreeChildren,
+				parentId,
+			) as Promise<Project[]>,
+		// 切换 worktree 模式开关
+		toggleWorktreeEnabled: (projectId: string) =>
+			ipcRenderer.invoke(
+				ipcChannels.projectsToggleWorktreeEnabled,
+				projectId,
+			) as Promise<Project | null>,
 	},
 	projectResources: {
 		list: (projectId: string) =>
@@ -220,6 +236,26 @@ const api = {
 				ipcChannels.gitChangedFiles,
 				projectId,
 			) as Promise<{ path: string; status: string }[]>,
+		// 列出项目的 git worktree（排除主工作区）
+		worktreeList: (projectId: string) =>
+			ipcRenderer.invoke(
+				ipcChannels.gitWorktreeList,
+				projectId,
+			) as Promise<WorktreeEntry[]>,
+		// 创建新的 worktree
+		worktreeCreate: (projectId: string, branchName: string) =>
+			ipcRenderer.invoke(
+				ipcChannels.gitWorktreeCreate,
+				projectId,
+				branchName,
+			) as Promise<{ path: string; branch: string }>,
+		// 删除 worktree
+		worktreeRemove: (projectId: string, worktreePath: string) =>
+			ipcRenderer.invoke(
+				ipcChannels.gitWorktreeRemove,
+				projectId,
+				worktreePath,
+			) as Promise<boolean>,
 	},
 	pi: {
 		check: () =>
