@@ -93,6 +93,7 @@ import {
   UserBubble,
   TurnRow,
   AskQuestionCard,
+  MultiSelectModal,
   type DrawerPanel,
   type SessionModifiedFile,
 } from "./components/app/AppParts";
@@ -548,8 +549,7 @@ export function App() {
   const prevIsAgentBusyRef = useRef(false);
 
   /** 当前 agent 流式思考的实时文本,agent_end 时清空 */
-  const [multiSelectMode, setMultiSelectMode] = useState(false);
-  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+  const [multiSelectOpen, setMultiSelectOpen] = useState(false);
 
   const [streamingThinking, setStreamingThinking] = useState<
     Record<string, string>
@@ -931,30 +931,14 @@ export function App() {
     ? runtimeStateByAgent[activeAgentId]
     : undefined;
 
-  // 多选模式：选中消息后复制为文本/Markdown/图片
-  const toggleMultiSelectMode = useCallback(() => {
-    setMultiSelectMode((prev) => !prev);
-  }, []);
-
-  const handleToggleMessageSelect = useCallback((messageId: string) => {
-    setSelectedMessageIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(messageId)) {
-        next.delete(messageId);
-      } else {
-        next.add(messageId);
-      }
-      return next;
-    });
-  }, []);
-
-  const copySelectedMessages = useCallback(async (kind: "text" | "markdown" | "image") => {
-    // 多选分享图片：截取消息列表容器截图
+  // 多选分享：弹框中选择消息后复制为文本/Markdown/图片
+  const handleMultiSelectCopy = useCallback(async (selectedIds: Set<string>, kind: "text" | "markdown" | "image") => {
+    // 图片模式：先截图再关弹框（避免 React re-render 导致 DOM 移位）
     if (kind === "image") {
-      const el = document.querySelector(".message-list");
-      if (!el) return;
       try {
         const { toBlob: toBlobImg } = await import("html-to-image");
+        const el = document.querySelector(".message-list");
+        if (!el) return;
         const blob = await toBlobImg(el as HTMLElement, {
           pixelRatio: Math.min(2, window.devicePixelRatio || 1),
           backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--color-bg-panel") || undefined,
@@ -962,47 +946,47 @@ export function App() {
             !(node instanceof HTMLElement) ||
             (!node.classList.contains("turn-row-actions") &&
               !node.classList.contains("user-turn-actions") &&
-              !node.classList.contains("copy-menu-popover") &&
-              !node.classList.contains("multi-select-action-bar")),
+              !node.classList.contains("copy-menu-popover")),
         });
         if (blob) {
           await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+          showToast(t("copy.asImageCopied"));
         }
       } catch {
-        return;
+        // 截图失败也给提示
+        showToast(t("copy.failed"));
       }
-      showToast(t("copy.asImageCopied"));
-      setMultiSelectMode(false);
-      setSelectedMessageIds(new Set());
+      setMultiSelectOpen(false);
       return;
     }
 
-    const selected = activeMessages
-      .filter((m) => selectedMessageIds.has(m.id))
-      .sort((a, b) => a.timestamp - b.timestamp);
-    if (selected.length === 0) return;
+    // 文本 / Markdown：关闭弹框后复制
+    async function doCopyText() {
+      const selected = activeMessages
+        .filter((m) => selectedIds.has(m.id))
+        .sort((a, b) => a.timestamp - b.timestamp);
+      if (selected.length === 0) return;
 
-    // 多选分享：用分隔线连接各条消息。纯文本去 ANSI 转义，Markdown 保留原始文本。
-    const separator = "\n\n---\n\n";
-    const content =
-      kind === "text"
-        ? selected.map((m) => {
-            // 纯文本模式剥离 ANSI、思考标签
-            let text = m.text;
-            // 用简单的正则模拟 stripAnsi/stripThinkingTags 效果
-            text = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
-            text = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, "");
-            // 去除用户消息中 pi 展开的 <skill> 块
-            text = text.replace(/<skill\s+name="[^"]*"[^>]*>[\s\S]*?<\/skill>/gi, "");
-            return text.trim();
-          }).join(separator)
-        : selected.map((m) => m.text).join(separator);
+      const separator = "\n\n---\n\n";
+      const content =
+        kind === "text"
+          ? selected.map((m) => {
+              let text = m.text;
+              text = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+              text = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, "");
+              text = text.replace(/<skill\s+name="[^"]*"[^>]*>[\s\S]*?<\/skill>/gi, "");
+              return text.trim();
+            }).join(separator)
+          : selected.map((m) => m.text).join(separator);
 
-    await navigator.clipboard.writeText(content);
-    showToast(kind === "text" ? t("copy.asTextCopied") : t("copy.asMarkdownCopied"));
-    setMultiSelectMode(false);
-    setSelectedMessageIds(new Set());
-  }, [activeMessages, selectedMessageIds]);
+      await navigator.clipboard.writeText(content);
+      showToast(kind === "text" ? t("copy.asTextCopied") : t("copy.asMarkdownCopied"));
+    }
+
+    // 先执行复制再关弹框，确保 toast 在弹框消失后仍然弹出
+    await doCopyText();
+    setMultiSelectOpen(false);
+  }, [activeMessages]);
 
   // 消息分页:超过 100 条消息时启用,大幅减少输入卡顿
   // 首屏 100 条,每次加载 100 条,一页一页懒加载
@@ -4641,7 +4625,7 @@ ${goalTextRef.current}
             : undefined),
         } as React.CSSProperties}
       >
-        <header ref={chatHeaderRef} className={`chat-header${multiSelectMode ? " multi-select-active" : ""}`}>
+        <header ref={chatHeaderRef} className="chat-header">
           <div className="chat-title-block">
             <div className="chat-title-row">
               <strong
@@ -4867,12 +4851,6 @@ ${goalTextRef.current}
                       (i) => i.kind === "message" && i.message.id === streamingMessageId,
                     ),
                   );
-                  // 多选模式：TurnRow 中所有 assistant 消息的选中状态
-                  const assistantMsgIds = item.items
-                    .filter((i) => i.kind === "message" && i.message.role === "assistant")
-                    .map((i) => (i as MessageItem).message.id);
-                  const allAssistantSelected = assistantMsgIds.length > 0 &&
-                    assistantMsgIds.every((id) => selectedMessageIds.has(id));
                   return (
                     <TurnRow
                       key={item.id}
@@ -4887,26 +4865,7 @@ ${goalTextRef.current}
                       onEditMessage={editMessage}
                       onDeleteMessage={deleteMessage}
                       fileSummariesByMessage={turnFileSummaryByMessage}
-                      multiSelectMode={multiSelectMode}
-                      onEnterMultiSelect={toggleMultiSelectMode}
-                      selected={allAssistantSelected}
-                      onToggleSelect={() => {
-                        if (allAssistantSelected) {
-                          // 全部已选中 → 全部取消
-                          setSelectedMessageIds((prev) => {
-                            const next = new Set(prev);
-                            assistantMsgIds.forEach((id) => next.delete(id));
-                            return next;
-                          });
-                        } else {
-                          // 部分/未选中 → 全部选中
-                          setSelectedMessageIds((prev) => {
-                            const next = new Set(prev);
-                            assistantMsgIds.forEach((id) => next.add(id));
-                            return next;
-                          });
-                        }
-                      }}
+                      onEnterMultiSelect={() => setMultiSelectOpen(true)}
                     />
                   );
                 }
@@ -4929,10 +4888,7 @@ ${goalTextRef.current}
                       isLastUserMessage={message.id === lastUserMessageId}
                       validCommandNames={validCommandNames}
                       validFilePaths={validFilePaths}
-                      multiSelectMode={multiSelectMode}
-                      onEnterMultiSelect={toggleMultiSelectMode}
-                      selected={selectedMessageIds.has(message.id)}
-                      onToggleSelect={() => handleToggleMessageSelect(message.id)}
+                      onEnterMultiSelect={() => setMultiSelectOpen(true)}
                     />
                   );
                 }
@@ -4978,59 +4934,31 @@ ${goalTextRef.current}
                       <div className="thinking-card-content">{activeThinking}</div>
                     </section>
                   )}
-                  <ThinkingIndicator
-                    thinking={activeThinking}
-                    showThinking={settings.showThinking}
-                    isExecutingTool={activeRuntimeState?.isExecutingTool}
-                    executingToolName={activeRuntimeState?.executingToolName}
-                  />
                 </>
+              )}
+              {/* 状态指示器：agent 运行或流式期间始终与回复并行展示 */}
+              {activeAgent && !cancellingUi &&
+                (activeAgent.status === "running" || activeRuntimeState?.isStreaming) && (
+                <ThinkingIndicator
+                  thinking={activeThinking}
+                  showThinking={settings.showThinking}
+                  isExecutingTool={activeRuntimeState?.isExecutingTool}
+                  isStreaming={activeRuntimeState?.isStreaming}
+                />
               )}
             </div>
           )}
 
-        </section>
-
-          {/* 多选模式浮动操作栏 */}
-          {multiSelectMode && (
-            <div className="multi-select-action-bar">
-              <span className="multi-select-count">
-                {t("app.multiSelectCount", { count: selectedMessageIds.size })}
-              </span>
-              <div className="multi-select-actions">
-                <button
-                  className="multi-select-action-btn"
-                  disabled={selectedMessageIds.size === 0}
-                  onClick={() => void copySelectedMessages("text")}
-                >
-                  {t("app.shareAsText")}
-                </button>
-                <button
-                  className="multi-select-action-btn"
-                  disabled={selectedMessageIds.size === 0}
-                  onClick={() => void copySelectedMessages("markdown")}
-                >
-                  {t("app.shareAsMarkdown")}
-                </button>
-                <button
-                  className="multi-select-action-btn"
-                  disabled={selectedMessageIds.size === 0}
-                  onClick={() => void copySelectedMessages("image")}
-                >
-                  {t("app.shareAsImage")}
-                </button>
-                <button
-                  className="multi-select-action-btn primary"
-                  onClick={() => {
-                    setMultiSelectMode(false);
-                    setSelectedMessageIds(new Set());
-                  }}
-                >
-                  {t("app.multiSelectCancel")}
-                </button>
-              </div>
-            </div>
+          {/* 多选分享弹框：会话树 */}
+          {multiSelectOpen && (
+            <MultiSelectModal
+              renderedRuns={renderedRuns}
+              onClose={() => setMultiSelectOpen(false)}
+              onCopy={handleMultiSelectCopy}
+            />
           )}
+
+        </section>
 
           {showScrollToBottom && (
             <button

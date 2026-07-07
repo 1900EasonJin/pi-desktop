@@ -749,6 +749,42 @@ export class AgentManager {
 		return this.getRuntimeState(agentId);
 	}
 
+	/**
+	 * 读取 session 文件，提取最后一条 assistant 消息的缓存命中率。
+	 * 与 pi CLI footer 的 latestCacheHitRate 逻辑一致：
+	 * latestCacheHitRate = cacheRead / (input + cacheRead + cacheWrite) * 100
+	 */
+	private async getLatestCacheMessageHitRate(sessionPath: string): Promise<number | undefined> {
+		try {
+			const raw = await readFile(sessionPath, "utf8");
+			const lines = raw.split(/\r?\n/);
+			// 从后往前遍历，找到最后一条 assistant 消息
+			for (let i = lines.length - 1; i >= 0; i--) {
+				const line = lines[i].trim();
+				if (!line) continue;
+				try {
+					const entry = JSON.parse(line) as Record<string, any>;
+					if (entry?.message?.role === "assistant" && entry.message?.usage) {
+						const usage = entry.message.usage;
+						const input = usage.input ?? 0;
+						const cacheRead = usage.cacheRead ?? 0;
+						const cacheWrite = usage.cacheWrite ?? 0;
+						const promptTokens = input + cacheRead + cacheWrite;
+						if (promptTokens > 0) {
+							return (cacheRead / promptTokens) * 100;
+						}
+						return undefined;
+					}
+				} catch {
+					// 单行解析失败忽略，继续往前找
+				}
+			}
+		} catch {
+			// 文件不存在或无法读取，返回 undefined
+		}
+		return undefined;
+	}
+
 	async getRuntimeState(agentId: string): Promise<AgentRuntimeState> {
 		const runtime = this.requireRuntime(agentId);
 		const [stateResponse, statsResponse] = await Promise.all([
@@ -798,14 +834,12 @@ export class AgentManager {
 			stats?.cacheHitRate != null ? stats.cacheHitRate * 100 : undefined,
 		);
 	/**
-	 * 缓存命中率 = cacheRead / (inputTokens + cacheRead + cacheWrite) × 100%
-	 * 使用与 pi CLI 相同的公式：缓存读取 token 占全部输入 token 的比例。
-	 * pi 的 get_session_stats RPC 不直接返回 cacheHitPercent，需自行推导。
+	 * 使用最新一条 assistant 消息的缓存命中率，与 pi CLI footer 保持一致。
+	 * pi 的 get_session_stats RPC 不直接返回 cacheHitPercent，需读取 session 文件。
 	 */
-		const computedCacheHitPercent =
-			inputTokens != null && cacheRead != null && cacheWrite != null && (inputTokens + cacheRead + cacheWrite) > 0
-				? (cacheRead / (inputTokens + cacheRead + cacheWrite)) * 100
-				: undefined;
+		const computedCacheHitPercent = runtime.tab.sessionPath
+			? await this.getLatestCacheMessageHitRate(runtime.tab.sessionPath)
+			: undefined;
 		const cacheHitPercent = this.clampPercent(
 			directCacheHitPercent ?? computedCacheHitPercent,
 		);

@@ -160,53 +160,72 @@ export function groupToolMessages(messages: ChatMessage[]): RenderMessage[] {
 
 	function flushRun() {
 		flushTools();
+		flushThinking();
 		if (currentRun.length === 0) return;
-		const ids = currentRun
-			.flatMap((item) => {
-				if (item.kind === "message") return [item.message.id];
-				return item.messages.map((m) => m.id);
-			})
-			.filter(Boolean);
-		const run: AgentRunItem = {
+
+		// 合并连续的 assistant 文本消息，避免同一轮回答被拆成多个气泡
+		const merged: Array<MessageItem | ToolGroupItem | ThinkingGroupItem> = [];
+		for (const item of currentRun) {
+			const prev = merged[merged.length - 1];
+			if (
+				item.kind === "message" &&
+				item.message.role === "assistant" &&
+				prev?.kind === "message" &&
+				prev.message.role === "assistant"
+			) {
+				prev.message = {
+					...prev.message,
+					text: prev.message.text + "\n\n" + item.message.text,
+					thinking: (prev.message.thinking || "") + (item.message.thinking ? "\n\n" + item.message.thinking : ""),
+					id: prev.message.id + "|" + item.message.id,
+				};
+			} else {
+				merged.push(item);
+			}
+		}
+
+		result.push({
 			kind: "agent-run",
-			id: ids.join("|"),
-			items: currentRun,
+			id: merged
+				.map((item) => (item.kind === "message" ? item.message.id : item.id))
+				.join("|"),
+			items: merged,
 			startedAt: runStartedAt,
-			endedAt: runEndedAt,
-		};
-		result.push(run);
+			endedAt: runEndedAt || runStartedAt,
+		});
 		currentRun = [];
 		runStartedAt = 0;
 		runEndedAt = 0;
 	}
 
+	function appendRunMessage(message: ChatMessage) {
+		flushThinking();
+		flushTools();
+		if (currentRun.length === 0) runStartedAt = message.timestamp;
+		runEndedAt = message.timestamp;
+		currentRun.push({ kind: "message", message });
+	}
+
 	for (const message of messages) {
-		if (message.role === "user" && currentRun.length > 0) {
-			flushRun();
-		}
-		if (message.role === "assistant") {
-			if (currentRun.length === 0) {
+		if (isThinkingOnly(message)) {
+			flushTools();
+			if (currentRun.length === 0 && currentThinking.length === 0) {
 				runStartedAt = message.timestamp;
 			}
-			if (isThinkingOnly(message)) {
-				currentThinking.push(message);
-			} else {
-				if (currentThinking.length > 0) {
-					flushThinking();
-				}
-				currentRun.push({ kind: "message", message });
-				runEndedAt = message.timestamp;
-			}
-			continue;
-		}
-		if (message.role === "tool" && currentRun.length > 0) {
+			currentThinking.push(message);
+			runEndedAt = message.timestamp;
+		} else if (message.role === "assistant") {
+			appendRunMessage(message);
+		} else if (message.role === "tool") {
+			flushThinking();
+			if (currentRun.length === 0) runStartedAt = message.timestamp;
 			currentTools.push(message);
-			continue;
+		} else {
+			flushRun();
+			result.push({ kind: "message", message });
 		}
-		if (currentRun.length > 0) flushRun();
-		result.push({ kind: "message", message });
 	}
-	if (currentRun.length > 0) flushRun();
+	flushRun();
 
 	return result;
 }
