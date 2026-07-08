@@ -1,7 +1,33 @@
 import { app, BrowserWindow, Menu } from "electron";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createDefaultExternalEditorSettings, type AppSettings } from "../../shared/types";
+
+/** pi agent 的 settings.json 路径（~/.pi/agent/settings.json） */
+function piAgentSettingsPath() {
+	return join(app.getPath("home"), ".pi", "agent", "settings.json");
+}
+
+/**
+ * 读取 pi agent 的 settings.json 并从中提取 showThinking（取 hideThinkingBlock 的反值）。
+ * pi CLI 的 hideThinkingBlock 语义：true=隐藏思考，false=显示思考。
+ * 桌面端 showThinking 语义：true=显示，false=隐藏。
+ * 映射：showThinking = !hideThinkingBlock
+ * 若 pi agent 文件不存在或 hideThinkingBlock 未设置，返回 undefined。
+ */
+function readPiAgentShowThinking(): boolean | undefined {
+	try {
+		const agentRaw = readFileSync(piAgentSettingsPath(), "utf8");
+		const agentSettings = JSON.parse(agentRaw) as Record<string, unknown>;
+		if (typeof agentSettings.hideThinkingBlock === "boolean") {
+			return !agentSettings.hideThinkingBlock;
+		}
+	} catch {
+		// 文件不存在或解析失败，静默忽略
+	}
+	return undefined;
+}
 
 const defaultSettings: AppSettings = {
   useNativeTitleBar: false,
@@ -13,7 +39,7 @@ const defaultSettings: AppSettings = {
   piEnvironmentChecked: false,
   closeToTray: true,
   enableNotifications: true,
-  showThinking: true,
+  showThinking: readPiAgentShowThinking() ?? true,
   showDevTools: false,
   piProxyEnabled: false,
   piProxyUrl: "http://127.0.0.1:7890",
@@ -63,6 +89,12 @@ export class SettingsStore {
     } catch {
       this.settings = { ...defaultSettings };
     }
+    // showThinking 不再作为可持久化的独立配置项，完全跟随 pi agent 的 hideThinkingBlock。
+    // 启动时重新读取以确保每次启动都使用最新值，而非缓存的 defaultSettings。
+    const computedShowThinking = readPiAgentShowThinking();
+    if (computedShowThinking !== undefined) {
+      this.settings.showThinking = computedShowThinking;
+    }
     // 每次启动都校准安装类型：Windows 便携版由 electron-builder 注入运行时环境变量,
     // 该信号比旧 settings 更可信,可修正用户从安装版/旧版本迁移后残留的 installed 记录。
     await this.detectAndSaveInstallationType();
@@ -75,7 +107,9 @@ export class SettingsStore {
   }
 
   async update(patch: Partial<AppSettings>) {
-    this.settings = { ...this.settings, ...patch };
+    // showThinking 完全由 pi agent 的 hideThinkingBlock 控制，不允许通过桌面设置修改
+    const { showThinking: _, ...safePatch } = patch;
+    this.settings = { ...this.settings, ...safePatch };
     await this.save();
     this.applyMenu();
     return this.get();
@@ -122,7 +156,9 @@ export class SettingsStore {
 
   private async save() {
     await mkdir(app.getPath("userData"), { recursive: true });
-    await writeFile(this.filePath, JSON.stringify(this.settings, null, 2), "utf8");
+    // showThinking 由 pi agent 的 hideThinkingBlock 决定，不持久化到桌面 settings.json
+    const { showThinking: _unused, ...persistable } = this.settings;
+    await writeFile(this.filePath, JSON.stringify(persistable, null, 2), "utf8");
   }
 
   /**

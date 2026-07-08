@@ -4833,14 +4833,6 @@ export function SettingsModal(props: {
 											props.onChange({ enableNotifications: checked })
 										}
 									/>
-									<SettingSwitch
-										title={t("settings.showThinking")}
-										description={t("settings.showThinkingDesc")}
-										checked={props.settings.showThinking}
-										onChange={(checked) =>
-											props.onChange({ showThinking: checked })
-										}
-									/>
 									<SelectField
 										className="setting-field"
 										label={t("settings.inputShortcut")}

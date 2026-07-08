@@ -1113,9 +1113,7 @@ const zhCN = {
   "settings.settingTakesEffectAfterRestart":
     "设置变更后，新建或重启 agent 才会生效",
   "settings.showNativeMenu": "显示原生菜单",
-  "settings.showThinking": "显示思考过程",
-  "settings.showThinkingDesc":
-    "开启后可看到模型推理过程，帮助理解 agent 为什么卡住",
+
   "settings.telemetry": "匿名使用统计",
   "settings.telemetryDesc":
     "帮助了解版本分布、平台兼容性和活跃安装数量。不会收集项目路径、代码、消息内容或文件名。",
@@ -2370,9 +2368,7 @@ const enUS: Record<TranslationKey, string> = {
   "settings.settingTakesEffectAfterRestart":
     "Changes take effect for newly created or restarted agents",
   "settings.showNativeMenu": "Show native menu",
-  "settings.showThinking": "Show thinking",
-  "settings.showThinkingDesc":
-    "Shows model reasoning to help understand why an agent appears stuck",
+
   "settings.telemetry": "Anonymous usage stats",
   "settings.telemetryDesc":
     "Helps understand version distribution, platform compatibility, and active installs. Project paths, code, message content, and file names are never collected.",
