@@ -47,7 +47,7 @@ export class SkillManager {
 		const location = this.requireLocation(input.locationId);
 		const name = this.normalizeSkillName(input.name);
 		const description = input.description.trim();
-		if (!name) throw new Error("Skill 名称只能包含小写字母、数字和连字符");
+		if (!name) throw new Error("Skill 名称不能为空，且至少包含一个字母或数字");
 		if (!description) throw new Error("Skill 描述不能为空");
 
 		const skillDir = join(location.path, name);
@@ -177,8 +177,8 @@ export class SkillManager {
 	private validateSkill(name: string, description: string) {
 		const warnings: string[] = [];
 		if (!name) warnings.push("缺少 name");
-		if (name && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
-			warnings.push("name 只能包含小写字母、数字和单个连字符");
+		if (name && !/^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u.test(name)) {
+			warnings.push("name 只能包含字母（含中文等）、数字和单个连字符");
 		}
 		if (name.length > 64) warnings.push("name 超过 64 个字符");
 		if (!description) warnings.push("缺少 description，pi 不会加载该 skill");
@@ -186,8 +186,9 @@ export class SkillManager {
 		return warnings;
 	}
 
+	/** 规范化 Skill 名称：保留 Unicode 字母（含中文等）、数字和连字符 */
 	private normalizeSkillName(value: string) {
-		return value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+		return value.trim().toLowerCase().replace(/[^\p{L}\p{N}-]+/gu, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
 	}
 
 	private requireLocation(id: PiSkillLocation["id"]) {

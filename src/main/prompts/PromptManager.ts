@@ -221,14 +221,15 @@ export class PromptManager {
 
 	async create(input: CreatePiPromptTemplateInput): Promise<PiPromptTemplateSummary> {
 		const name = this.normalizeName(input.name);
-		if (!name) throw new Error("模板名称只能包含小写字母、数字和连字符");
+		if (!name) throw new Error("模板名称不能为空，且至少包含一个字母或数字");
 		const description = input.description.trim();
 		if (!description) throw new Error("模板描述不能为空");
 
 		const filePath = join(this.promptsDir, `${name}.md`);
 		if (existsSync(filePath)) throw new Error(`模板已存在：${name}`);
 
-		const content = `---\ndescription: ${description.replace(/\n/g, " ")}\n---\n\n${description}\n`;
+		// 内容仅含 frontmatter 中的 description，正文由用户后续在编辑器中编写，不与 skill 重复展示描述
+		const content = `---\ndescription: ${description.replace(/\n/g, " ")}\n---\n`;
 		await writeFile(filePath, content, "utf8");
 
 		return {
@@ -286,12 +287,13 @@ export class PromptManager {
 		const projectPromptsDir = join(projectPath, ".pi", "prompts");
 		await mkdir(projectPromptsDir, { recursive: true });
 		const name = this.normalizeName(input.name);
-		if (!name) throw new Error("模板名称只能包含小写字母、数字和连字符");
+		if (!name) throw new Error("模板名称不能为空，且至少包含一个字母或数字");
 		const description = input.description.trim();
 		if (!description) throw new Error("模板描述不能为空");
 		const filePath = join(projectPromptsDir, `${name}.md`);
 		if (existsSync(filePath)) throw new Error(`模板已存在：${name}`);
-		const content = `---\ndescription: ${description.replace(/\n/g, " ")}\n---\n\n${description}\n`;
+		// 内容仅含 frontmatter 中的 description，正文由用户后续编辑
+		const content = `---\ndescription: ${description.replace(/\n/g, " ")}\n---\n`;
 		await writeFile(filePath, content, "utf8");
 		return {
 			name,
@@ -347,12 +349,14 @@ export class PromptManager {
 		return result;
 	}
 
+	/** 规范化模板名称：保留 Unicode 字母（含中文等非拉丁文字）、数字和连字符，其余替换为连字符 */
 	private normalizeName(value: string): string {
 		return value
 			.trim()
-			.toLowerCase()
-			.replace(/[^a-z0-9-]+/g, "-")
+			// 替换非（Unicode 字母/数字/连字符）的字符为连字符
+			.replace(/[^\p{L}\p{N}-]/gu, "-")
 			.replace(/-+/g, "-")
-			.replace(/^-|-$/g, "");
+			.replace(/^-|-$/g, "")
+			.toLowerCase();
 	}
 }
