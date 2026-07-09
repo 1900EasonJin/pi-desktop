@@ -528,7 +528,7 @@ export class AgentManager {
 		// 后续消息必须带 streamingBehavior 否则 pi 直接返回 error。这里自动兜底。
 		// images 用于传递粘贴/拖拽的图片，pi 会将 base64 图片直接传给支持视觉的模型。
 		try {
-			const isExtensionCommand = await this.isExtensionCommandPrompt(runtime, agentMessage);
+			const promptIsExtensionCommand = await this.promptMatchesRegisteredExtensionCommand(runtime, agentMessage);
 			const requestPayload: Record<string, unknown> = {
 				type: "prompt",
 				message: agentMessage,
@@ -554,8 +554,12 @@ export class AgentManager {
 					response.error ?? "图片消息发送失败",
 				);
 				this.emitState();
-			} else if (isExtensionCommand) {
-				this.schedulePromptIdleReconcile(input.agentId);
+			} else if (promptIsExtensionCommand) {
+				// 机制：Pi 扩展命令可在 prompt 阶段直接执行并返回，不进入 agent run。
+				// 证据：@earendil-works/pi-coding-agent/dist/core/agent-session.js 中 AgentSession.prompt()
+				//      先调用 _tryExecuteExtensionCommand()；命中后 return，不再调用 _runAgentPrompt()。
+				// 推导：不能等 agent_end；只有 Pi get_state 明确报告无剩余工作时才恢复 idle。
+				this.scheduleIdleCheckAfterExtensionCommand(input.agentId);
 			}
 		} catch (error) {
 			// 超时或进程崩溃后，需要明确提示用户重启 Agent
@@ -1759,7 +1763,7 @@ export class AgentManager {
 		);
 	}
 
-	private async isExtensionCommandPrompt(runtime: AgentRuntime, message: string): Promise<boolean> {
+	private async promptMatchesRegisteredExtensionCommand(runtime: AgentRuntime, message: string): Promise<boolean> {
 		const trimmed = message.trim();
 		if (!trimmed.startsWith("/")) return false;
 
@@ -3077,14 +3081,14 @@ export class AgentManager {
 		timer.unref?.();
 	}
 
-	private schedulePromptIdleReconcile(agentId: string) {
+	private scheduleIdleCheckAfterExtensionCommand(agentId: string) {
 		const timer = setTimeout(() => {
-			void this.reconcilePromptIdle(agentId);
+			void this.markIdleIfPiReportsNoWork(agentId);
 		}, 100);
 		timer.unref?.();
 	}
 
-	private async reconcilePromptIdle(agentId: string) {
+	private async markIdleIfPiReportsNoWork(agentId: string) {
 		const runtime = this.agents.get(agentId);
 		if (!runtime || runtime.tab.status !== "running") return;
 		if ((this.pendingUIRequests.get(agentId)?.size ?? 0) > 0) return;
@@ -3094,10 +3098,14 @@ export class AgentManager {
 		const response = await runtime.process.client
 			.request({ type: "get_state" }, 10_000)
 			.catch(() => undefined);
-		const state = response?.data as
-			| { isStreaming?: boolean; isCompacting?: boolean; pendingMessageCount?: number }
-			| undefined;
-		if (state?.isStreaming || state?.isCompacting || (state?.pendingMessageCount ?? 0) > 0) return;
+		if (!response?.success || !response.data) return;
+
+		const state = response.data as {
+			isStreaming?: boolean;
+			isCompacting?: boolean;
+			pendingMessageCount?: number;
+		};
+		if (state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0) return;
 
 		runtime.tab.status = "idle";
 		this.streamingThinking.delete(agentId);

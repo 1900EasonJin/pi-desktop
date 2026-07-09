@@ -78,10 +78,12 @@ PiDeck 修复前没有完整区分这两类请求：
 
 另一个 gap 是扩展命令生命周期：
 
-- Pi RPC 的 `prompt` 命令返回成功，只表示 prompt 被接受、排队或已由扩展命令处理。
-- 如果输入是扩展命令，Pi 可以直接执行 command handler 并返回，不启动 LLM turn。
-- 不启动 LLM turn 时，后续不会稳定出现 `agent_start` / `agent_end`。
-- PiDeck 已经将状态设为 `running`，但没有收到 `agent_end`，因此状态可能残留。
+- 机制：Pi RPC 的 `prompt` 命令返回成功，只表示 prompt 被接受、排队或已由扩展命令处理；如果输入是扩展命令，Pi 可以直接执行 command handler 并返回，不启动 LLM turn。
+- 证据：`@earendil-works/pi-coding-agent/dist/core/agent-session.js` 中：
+  - `AgentSession.prompt()` 在进入 `_runAgentPrompt()` 前先调用 `_tryExecuteExtensionCommand()`。
+  - 命中扩展命令后执行 `preflightResult?.(true)` 并 `return`，不再调用 `_runAgentPrompt()`。
+  - `_tryExecuteExtensionCommand()` 只 `await command.handler(args, ctx)`，不会启动 agent run。
+- 推导的处理逻辑：PiDeck 不能只等待 `agent_end` 恢复 idle。对于已确认命中的 extension command，RPC `prompt` 成功返回后需要再查询 `get_state`；只有 Pi 明确报告无剩余工作，且 PiDeck 本地也没有 pending dialog / active assistant / running tool，才恢复 idle。
 
 ### 分析问题的缘由（证据）
 
@@ -110,10 +112,10 @@ PiDeck 侧可核验位置：
    - `notify`、`setStatus`、`setWidget`、`setTitle`、`set_editor_text` 不创建 pending UI 请求。
    - 未识别的方法直接忽略，避免误判为 dialog。
 
-2. 对扩展命令完成后的状态做 reconcile。
+2. 扩展命令成功返回后，确认 Pi 是否还有未完成工作。
    - 发送前通过 `get_commands` 判断斜线输入是否命中扩展命令。
    - RPC `prompt` 返回成功后，如果这是扩展命令，则短延迟查询 `get_state`。
-   - 如果 Pi 表示没有 streaming、没有 compaction、没有 pending message，并且 PiDeck 没有 pending dialog / active assistant / running tool，则将 Agent 状态恢复为 idle。
+   - 只有 Pi 明确返回没有 streaming、没有 compaction、没有 pending message，并且 PiDeck 本地也没有 pending dialog / active assistant / running tool，才将 Agent 状态恢复为 idle。
 
 3. 处理 dialog timeout 的本地残留。
    - Pi RPC dialog 带 `timeout` 时，Pi 会在超时后自行 resolve。
@@ -127,9 +129,9 @@ PiDeck 侧可核验位置：
 
 ### `src/main/pi/AgentManager.ts`
 
-- 新增 `isExtensionCommandPrompt()`：判断当前 prompt 是否是已注册的 extension command。
-- `sendPrompt()` 中：对 extension command 的成功响应安排 `schedulePromptIdleReconcile()`。
-- 新增 `reconcilePromptIdle()`：根据 Pi `get_state` 和 PiDeck 本地状态判断是否恢复 idle。
+- 新增 `promptMatchesRegisteredExtensionCommand()`：判断当前 prompt 是否命中已注册的 extension command。
+- `sendPrompt()` 中：对 extension command 的成功响应安排 `scheduleIdleCheckAfterExtensionCommand()`。
+- 新增 `markIdleIfPiReportsNoWork()`：只有 Pi `get_state` 成功返回且显示无剩余工作时，才恢复 idle。
 - `handleUIRequest()` 中：
   - `notify` 转发到 renderer，不进入 pending。
   - `set_editor_text` 转发到 renderer，不进入 pending。
