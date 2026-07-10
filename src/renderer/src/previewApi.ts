@@ -520,6 +520,33 @@ export function createPreviewApi(): PiDesktopApi {
 				userCreated: true,
 			}),
 		},
+		yaoPrompts: {
+			list: async () => ({ categories: [], prompts: [], repoPath: "" }),
+			detail: async () => ({ title: "", description: "", promptContent: "", fullContent: "" }),
+			import: async (_slug, _category) => ({
+				name: _slug,
+				path: `C:/Users/preview/.pi/agent/prompts/${_slug}.md`,
+				description: "Preview import",
+				content: "Preview content",
+				userCreated: true,
+			}),
+		},
+		skillStore: {
+			search: async () => ({ query: "", count: 0, prompts: [] }),
+			import: async (data, _locationId) => ({
+				name: data.title.toLowerCase().replace(/[^\w-]+/g, "-"),
+				path: `C:/Users/preview/.pi/agent/skills/${data.title.toLowerCase().replace(/[^\w-]+/g, "-")}/SKILL.md`,
+				description: data.description,
+				enabled: true,
+				valid: true,
+				warnings: [],
+				id: `pi-global:preview`,
+				dir: "",
+				sourceId: "pi-global",
+				sourceLabel: "Preview",
+				type: "directory",
+			}),
+		},
 		settings: {
 			get: async (): Promise<AppSettings> => ({ ...previewSettings }),
 			update: async (patch): Promise<AppSettings> => {

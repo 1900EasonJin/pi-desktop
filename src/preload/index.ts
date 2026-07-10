@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { ipcChannels } from "../shared/ipc";
 import type {
+	YaoPromptListResult,
+	YaoPromptDetailResult,
 	AgentRuntimeState,
 	AgentTab,
 	AppInfo,
@@ -393,6 +395,20 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.promptStoreGet, id) as Promise<PromptStoreItem>,
 		import: (data: { title: string; description: string; content: string }) =>
 			ipcRenderer.invoke(ipcChannels.promptStoreImport, data) as Promise<PiPromptTemplateSummary>,
+	},
+	skillStore: {
+		search: (query: string) =>
+			ipcRenderer.invoke(ipcChannels.skillStoreSearch, query) as Promise<PromptStoreSearchResult>,
+		import: (item: PromptStoreItem, locationId?: string) =>
+			ipcRenderer.invoke(ipcChannels.skillStoreImport, item, locationId) as Promise<PiSkillSummary>,
+	},
+	yaoPrompts: {
+		list: () =>
+			ipcRenderer.invoke(ipcChannels.yaoPromptsList) as Promise<YaoPromptListResult>,
+		detail: (slug: string, category: string) =>
+			ipcRenderer.invoke(ipcChannels.yaoPromptsDetail, slug, category) as Promise<YaoPromptDetailResult>,
+		import: (slug: string, category: string) =>
+			ipcRenderer.invoke(ipcChannels.yaoPromptsImport, slug, category) as Promise<PiPromptTemplateSummary>,
 	},
 	extensions: {
 		list: () =>

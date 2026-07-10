@@ -4415,7 +4415,6 @@ ${goalTextRef.current}
                   onDragEnd={finishProjectDrag}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    if (projectIsChat) return;
                     setProjectMenu({
                       ...adjustMenuPos(event.clientX, event.clientY, 200, 320),
                       project,

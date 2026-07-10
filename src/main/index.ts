@@ -69,6 +69,8 @@ import type {
 	PromptStoreSearchResponse,
 	PromptStoreRawItem,
 	PromptStoreItem,
+	YaoPromptListResult,
+	YaoPromptDetailResult,
 } from "../shared/types";
 import { ProjectStore } from "./projects/ProjectStore";
 import { FileSystemService } from "./fs/FileSystemService";
@@ -87,6 +89,7 @@ import { ConfigManager } from "./config/ConfigManager";
 import { TerminalSessionManager } from "./terminal/TerminalSessionManager";
 import { TelemetryService } from "./telemetry/TelemetryService";
 import { PromptManager } from "./prompts/PromptManager";
+import { YaoPromptManager } from "./prompts/YaoPromptManager";
 import { SkillManager } from "./skills/SkillManager";
 import { ExtensionManager } from "./extensions/ExtensionManager";
 import { ProjectResourceManager } from "./projects/ProjectResourceManager";
@@ -134,6 +137,7 @@ let piLocator: PiLocator;
 let agentManager: AgentManager;
 let configManager: ConfigManager;
 let promptManager: PromptManager;
+let yaoPromptManager: YaoPromptManager;
 let skillManager: SkillManager;
 let extensionManager: ExtensionManager;
 let projectResourceManager: ProjectResourceManager;
@@ -1994,6 +1998,96 @@ function registerIpc() {
 		}
 	});
 
+	// ── Skill Store（prompts.chat skills） ─────────────────────────────
+	/** 搜索 prompts.chat 的公开 skill。复用 prompts 搜索，按 skill 关键词过滤 */
+	ipcMain.handle(ipcChannels.skillStoreSearch, async (_event, query: string) => {
+		try {
+			const params = new URLSearchParams({ q: query, perPage: "20" });
+			const url = `https://prompts.chat/api/prompts?${params.toString()}`;
+			const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+			if (!response.ok) throw new Error(`prompts.chat API 返回 ${response.status}`);
+			const raw = (await response.json()) as PromptStoreSearchResponse;
+			const result: PromptStoreSearchResult = {
+				query,
+				count: raw.total,
+				prompts: raw.prompts.map(flattenPromptItem),
+			};
+			return result;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			throw new Error(`搜索 skill 商店失败: ${message}`);
+		}
+	});
+
+	/** 从 prompts.chat 导入为本地 skill */
+	ipcMain.handle(ipcChannels.skillStoreImport, async (_event, item: PromptStoreItem, locationId: "pi-global" | "agents-global" = "pi-global") => {
+		try {
+			const name = item.title
+				.trim()
+				.toLowerCase()
+				.replace(/[^\p{L}\p{N}-]+/gu, "-")
+				.replace(/-+/g, "-")
+				.replace(/^-|-$/g, "");
+			if (!name) throw new Error("标题中未提取到有效文件名");
+
+			const { writeFile } = await import("node:fs/promises");
+
+			// 用 SkillManager 创建 skill（默认 pi-global，用户可通过 dropdown 切换）
+			const summary = await skillManager.create({
+				name,
+				description: item.description || item.title,
+				locationId: locationId ?? "pi-global",
+			});
+
+			// 覆盖 SKILL.md 为实际内容
+			const skillContent = `---\nname: ${name}\ndescription: ${(item.description || item.title).replace(/\n/g, " ")}\nsource: prompts.chat\n---\n\n# ${item.title}\n\n${item.content}`;
+			await writeFile(summary.path, skillContent, "utf8");
+
+			void appLogger.info("skill-store", "Imported skill from store", { title: item.title, localName: name });
+			return summary;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			void appLogger.warn("skill-store", "Import failed", { title: item.title, error: message });
+			throw new Error(`导入 skill 失败: ${message}`);
+		}
+	});
+
+	// ── Yao Open Prompts（中文提示词精选） ─────────────────────────────
+	ipcMain.handle(ipcChannels.yaoPromptsList, async () => {
+		try {
+			const result = await yaoPromptManager.list();
+			return result;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			void appLogger.warn("yao-prompts", "List failed", { error: message });
+			throw new Error(`读取中文提示词库失败: ${message}`);
+		}
+	});
+
+	ipcMain.handle(ipcChannels.yaoPromptsDetail, async (_event, slug: string, category: string) => {
+		try {
+			const result = await yaoPromptManager.detail(slug, category);
+			if (!result) throw new Error(`未找到提示词: ${slug}`);
+			return result;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			void appLogger.warn("yao-prompts", "Detail failed", { slug, category, error: message });
+			throw new Error(`读取提示词详情失败: ${message}`);
+		}
+	});
+
+	ipcMain.handle(ipcChannels.yaoPromptsImport, async (_event, slug: string, category: string) => {
+		try {
+			const result = await yaoPromptManager.importToPi(slug, category);
+			void appLogger.info("yao-prompts", "Imported to pi templates", { slug, localName: result.name });
+			return result;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			void appLogger.warn("yao-prompts", "Import failed", { slug, category, error: message });
+			throw new Error(`导入提示词失败: ${message}`);
+		}
+	});
+
 	ipcMain.handle(ipcChannels.extensionsList, () => extensionManager.list());
 	ipcMain.handle(ipcChannels.extensionsUninstall, async (_event, source: string, scope?: "user" | "project" | "unknown") => {
 		const result = await extensionManager.uninstall(source, scope);
@@ -2425,6 +2519,7 @@ app.whenReady().then(async () => {
 	piLocator = new PiLocator();
 	configManager = new ConfigManager();
 	promptManager = new PromptManager();
+	yaoPromptManager = new YaoPromptManager();
 	skillManager = new SkillManager();
 	extensionManager = new ExtensionManager(piLocator, () => settingsStore.get());
 	projectResourceManager = new ProjectResourceManager((projectId) => projectStore.get(projectId));

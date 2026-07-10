@@ -546,6 +546,55 @@ export interface PromptStoreSearchResult {
 
 export type PromptStoreSearchType = "TEXT" | "STRUCTURED" | "IMAGE" | "VIDEO" | "AUDIO";
 
+// ── Skill Store ────────────────────────────────────────────────────────
+
+/** 从 prompts.chat 通过 get_skill 获取的 skill 详情 */
+export interface SkillStoreDetail {
+	id: string;
+	title: string;
+	description: string;
+	files: Array<{ filename: string; content: string }>;
+}
+
+export interface SkillStoreSearchResult {
+	query: string;
+	count: number;
+	items: PromptStoreItem[];
+}
+
+// ── Yao Open Prompts（中文提示词精选） ─────────────────────────────────
+
+export type YaoPromptCategory = {
+	slug: string;
+	name: string;
+	count: number;
+};
+
+export type YaoPromptItem = {
+	/** 文件名（不含 .md） */
+	slug: string;
+	title: string;
+	category: string;
+	subcategory: string;
+	tags: string[];
+	description: string;
+	/** 文件绝对路径 */
+	path: string;
+};
+
+export type YaoPromptListResult = {
+	categories: YaoPromptCategory[];
+	prompts: YaoPromptItem[];
+	repoPath: string;
+};
+
+export type YaoPromptDetailResult = {
+	title: string;
+	description: string;
+	promptContent: string;
+	fullContent: string;
+};
+
 export type ProjectResourceListResult = {
 	skills: PiSkillSummary[];
 	extensions: PiExtensionSummary[];

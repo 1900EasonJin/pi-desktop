@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Download, ExternalLink, Search } from "lucide-react";
+import { ArrowLeft, BookOpen, Download, ExternalLink, Globe, Search } from "lucide-react";
 import type { PromptStoreItem, PromptStoreSearchResult, PiPromptTemplateSummary } from "../../../shared/types";
 import { t } from "../i18n";
+import { YaoPromptTab } from "./YaoPromptTab";
 
 const api = (window as unknown as { piDesktop: { promptStore: { search: (q: string, opts?: { limit?: number }) => Promise<PromptStoreSearchResult>; get: (id: string) => Promise<PromptStoreItem>; import: (data: { title: string; description: string; content: string }) => Promise<PiPromptTemplateSummary> } } }).piDesktop;
 
@@ -15,6 +16,7 @@ export function PromptStoreTab(props: {
 	/** 导入成功后的回调，用于刷新本地模板列表 */
 	onImported?: () => void;
 }) {
+	const [storeSubTab, setStoreSubTab] = useState<"store" | "yao">("store");
 	const [query, setQuery] = useState("");
 	const [searching, setSearching] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -142,8 +144,30 @@ export function PromptStoreTab(props: {
 
 	return (
 		<div className="prompt-store-tab">
-			{/* 搜索栏 */}
-			<div className="prompt-store-search-bar">
+			{/* 子 tab 切换：国际商店 / 中文精选 */}
+			<div className="prompts-tab-bar">
+				<button
+					className={`prompts-tab-btn ${storeSubTab === "store" ? "active" : ""}`}
+					onClick={() => setStoreSubTab("store")}
+				>
+					<Globe size={14} strokeWidth={1.8} />
+					prompts.chat
+				</button>
+				<button
+					className={`prompts-tab-btn ${storeSubTab === "yao" ? "active" : ""}`}
+					onClick={() => setStoreSubTab("yao")}
+				>
+					<BookOpen size={14} strokeWidth={1.8} />
+					中文精选
+				</button>
+			</div>
+
+			{storeSubTab === "yao" ? (
+				<YaoPromptTab onImported={props.onImported} />
+			) : (
+				<>
+					{/* 搜索栏 */}
+					<div className="prompt-store-search-bar">
 				<div className="prompt-store-search-input-wrap">
 					<Search size={15} strokeWidth={1.8} className="prompt-store-search-icon" />
 					<input
@@ -228,6 +252,8 @@ export function PromptStoreTab(props: {
 						</article>
 					))}
 				</div>
+			)}
+				</>
 			)}
 		</div>
 	);
