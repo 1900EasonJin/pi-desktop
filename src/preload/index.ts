@@ -49,6 +49,8 @@ import type {
 	PiCommand,
 	PiExtensionListResult,
 	PiInstallStatus,
+	PiInstallExecResult,
+	NpmAvailabilityResult,
 	PiPromptTemplateListResult,
 	PiPromptTemplateSummary,
 	CreatePiPromptTemplateInput,
@@ -279,6 +281,12 @@ const api = {
 			ipcRenderer.invoke(ipcChannels.piUpdateCheck) as Promise<PiUpdateCheckResult>,
 		update: () =>
 			ipcRenderer.invoke(ipcChannels.piUpdate) as Promise<PiCliUpdateResult>,
+		/** 执行安装命令（如 npm install -g pi）并返回执行结果 */
+		execInstall: (command: string) =>
+			ipcRenderer.invoke(ipcChannels.piExecInstall, command) as Promise<PiInstallExecResult>,
+		/** 检查 npm 是否可用 */
+		checkNpm: () =>
+			ipcRenderer.invoke(ipcChannels.piCheckNpm) as Promise<NpmAvailabilityResult>,
 	},
 	logs: {
 		list: (query?: AppLogQuery) =>

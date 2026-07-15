@@ -428,6 +428,21 @@ export type PiInstallStatus = {
 	error?: string;
 };
 
+/** 安装命令执行结果 */
+export type PiInstallExecResult = {
+	success: boolean;
+	exitCode: number | null;
+	stdout: string;
+	stderr: string;
+};
+
+/** npm 可用性检测结果 */
+export type NpmAvailabilityResult = {
+	available: boolean;
+	version?: string;
+	error?: string;
+};
+
 export type ConfigFileDiagnostic = {
 	fileName: string;
 	message: string;

@@ -162,6 +162,8 @@ import type {
   ImageContent,
   PiCommand,
   PiInstallStatus,
+  PiInstallExecResult,
+  NpmAvailabilityResult,
   PiUpdateCheckResult,
   Project,
   SessionSummary,
@@ -882,6 +884,22 @@ export function App() {
   const [customPathValidating, setCustomPathValidating] = useState(false);
   const [customPathResult, setCustomPathResult] =
     useState<PiInstallStatus | null>(null);
+  /** npm 可用性检测 */
+  const [npmAvailable, setNpmAvailable] = useState<boolean | null>(null);
+  const [npmVersion, setNpmVersion] = useState<string | undefined>(undefined);
+  const [npmChecking, setNpmChecking] = useState(false);
+  /** 安装命令文本（可编辑） */
+  const [installCommand, setInstallCommand] = useState(
+    "npm install -g @earendil-works/pi-coding-agent",
+  );
+  /** 是否使用国内镜像源 */
+  const [installUseMirror, setInstallUseMirror] = useState(false);
+  /** 是否正在执行安装 */
+  const [installExecuting, setInstallExecuting] = useState(false);
+  /** 安装执行结果 */
+  const [installResult, setInstallResult] = useState<PiInstallExecResult | null>(null);
+  /** 安装是否已成功完成 */
+  const [installCompleted, setInstallCompleted] = useState(false);
   const [environmentDialog, setEnvironmentDialog] = useState(false);
   const DEFAULT_LIST_WIDTH = 190;
   const [listWidth, setListWidth] = useState(DEFAULT_LIST_WIDTH);
@@ -2227,6 +2245,43 @@ export function App() {
     setSettingsNotice(t("app.piPathCleared"));
     const status = await api.pi.check();
     setPiStatus(status);
+  }
+
+  /**
+   * 检查 npm 是否可用。
+   * 通过主进程执行 npm --version 检测系统中是否安装了 npm。
+   */
+  async function checkNpm() {
+    setNpmChecking(true);
+    try {
+      const result = await api.pi.checkNpm();
+      setNpmAvailable(result.available);
+      setNpmVersion(result.version);
+    } finally {
+      setNpmChecking(false);
+    }
+  }
+
+  /**
+   * 执行安装命令的 handler。
+   * 调用主进程执行命令，根据退出码判断成功/失败。
+   */
+  async function execInstallCommand() {
+    const cmd = installCommand.trim();
+    if (!cmd) return;
+    setInstallExecuting(true);
+    setInstallResult(null);
+    setInstallCompleted(false);
+    try {
+      const result = await api.pi.execInstall(cmd);
+      setInstallResult(result);
+      // 退出码 0 表示成功（npm install 成功时 exitCode 为 0）
+      if (result.success && result.exitCode === 0) {
+        setInstallCompleted(true);
+      }
+    } finally {
+      setInstallExecuting(false);
+    }
   }
 
   function showToast(message: string, duration = 3500) {
@@ -6260,9 +6315,18 @@ ${goalTextRef.current}
           onClose={() => {
             setEnvironmentDialog(false);
             setCustomPathResult(null);
+            // 关闭时重置安装状态
+            setInstallResult(null);
+            setInstallCompleted(false);
+            setNpmAvailable(null);
           }}
           onRecheck={() => {
             setCustomPathResult(null);
+            setNpmAvailable(null);
+            setNpmVersion(undefined);
+            setInstallResult(null);
+            setInstallCompleted(false);
+            setInstallUseMirror(false);
             checkPiInstall("manual");
           }}
           onOpenInstallDocs={() =>
@@ -6280,6 +6344,46 @@ ${goalTextRef.current}
           onValidateCustomPath={() =>
             validateCustomPiPath({ closeDialogOnSuccess: true })
           }
+          npmAvailable={npmAvailable}
+          npmVersion={npmVersion}
+          npmChecking={npmChecking}
+          installCommand={installCommand}
+          installUseMirror={installUseMirror}
+          installExecuting={installExecuting}
+          installResult={installResult}
+          installCompleted={installCompleted}
+          onCheckNpm={checkNpm}
+          onInstallCommandChange={(cmd) => {
+            setInstallCommand(cmd);
+            setInstallResult(null);
+            setInstallCompleted(false);
+          }}
+          onToggleInstallMirror={() => {
+            setInstallUseMirror((prev) => {
+              // 切换镜像，同时更新命令文本
+              if (prev) {
+                // 移除镜像
+                setInstallCommand((cmd) =>
+                  cmd.replace(
+                    /\s+--registry=https:\/\/registry\.npmmirror\.com/g,
+                    "",
+                  ),
+                );
+              } else {
+                // 添加镜像
+                setInstallCommand((cmd) =>
+                  cmd.includes("--registry=")
+                    ? cmd
+                    : cmd + " --registry=https://registry.npmmirror.com",
+                );
+              }
+              return !prev;
+            });
+            setInstallResult(null);
+            setInstallCompleted(false);
+          }}
+          onExecInstall={execInstallCommand}
+          onRestartApp={() => api.app.restart()}
         />
       )}
       {promptTemplatePickerOpen && (

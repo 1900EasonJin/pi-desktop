@@ -83,6 +83,10 @@ export const ipcChannels = {
 	piCheckCustom: "pi:check-custom",
 	piUpdateCheck: "pi:update-check",
 	piUpdate: "pi:update",
+	/** 在系统终端中执行安装命令（npm install）并返回结果 */
+	piExecInstall: "pi:exec-install",
+	/** 检查 npm 是否可用 */
+	piCheckNpm: "pi:check-npm",
 	appInfo: "app:info",
 	appCheckUpdate: "app:check-update",
 	appDownloadUpdate: "app:download-update",

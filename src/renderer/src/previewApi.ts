@@ -325,7 +325,7 @@ export function createPreviewApi(): PiDesktopApi {
 			openFile: async () => undefined,
 		},
 		pi: {
-			check: async () => ({ 
+			check: async () => ({
 				installed: true,
 				command: "pi",
 				version: "preview",
@@ -346,6 +346,16 @@ export function createPreviewApi(): PiDesktopApi {
 				command: "pi update pi --no-approve",
 				output: "Preview mode: pi update output",
 				updated: false,
+			}),
+			execInstall: async (_command) => ({
+				success: true,
+				exitCode: 0,
+				stdout: "preview: exec install output",
+				stderr: "",
+			}),
+			checkNpm: async () => ({
+				available: true,
+				version: "preview",
 			}),
 		},
 		app: {
