@@ -35,6 +35,7 @@ import {
   Globe,
   Pin,
   Pencil,
+  ArrowUp,
   Square,
   Terminal,
   Filter,
@@ -112,6 +113,7 @@ import {
 import { BrowserPanel } from "./components/app/BrowserPanel";
 import {
   groupToolMessages,
+  getMultiSelectImageCaptureIds,
   applySuggestion,
   buildOutline,
   buildSuggestionItems,
@@ -201,7 +203,8 @@ const api =
 const COMPOSER_MIN_HEIGHT = 175;
 const COMPOSER_DEFAULT_TERMINAL_HEIGHT = 220;
 const COMPOSER_MIN_TIMELINE_HEIGHT = 160;
-const DRAWER_ANIMATION_MS = 300;
+const DRAWER_ANIMATION_MS = 180;
+const TERMINAL_DOCK_MOTION_MS = 180;
 const SIDEBAR_PROJECT_CHILD_PAGE_SIZE = 5;
 const AGENT_CREATE_TIMEOUT_MS = 60_000;
 
@@ -778,6 +781,19 @@ export function App() {
     () => editorTabs.find((t) => t.id === activeTabId) ?? null,
     [editorTabs, activeTabId],
   );
+  // FileDiffViewer 会在读取函数变化时重载文件；这些 IO 入口必须保持引用稳定，避免 App 轮询/消息更新导致预览滚动回到顶部。
+  const readEditorFileContent = useCallback(
+    (path: string) => api.files.readContent(path),
+    [],
+  );
+  const readEditorOriginalContent = useCallback(
+    (path: string) => api.git.originalContent(path),
+    [],
+  );
+  const saveEditorFileContent = useCallback(
+    (path: string, content: string) => api.files.writeContent(path, content),
+    [],
+  );
   /** 打开（或切换到已存在的）编辑器 tab。已打开时跳转；未打开时新增，超过 5 个淘汰最早 tab。 */
   const openEditorTab = useCallback(
     (path: string, mode: "view" | "diff", originalContent?: string, modifiedContent?: string) => {
@@ -1014,7 +1030,7 @@ export function App() {
   /** 安装是否已成功完成 */
   const [installCompleted, setInstallCompleted] = useState(false);
   const [environmentDialog, setEnvironmentDialog] = useState(false);
-  const DEFAULT_LIST_WIDTH = 190;
+  const DEFAULT_LIST_WIDTH = 260;
   const [listWidth, setListWidth] = useState(DEFAULT_LIST_WIDTH);
   const [drawerWidth, setDrawerWidth] = useState(270);
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
@@ -1026,6 +1042,10 @@ export function App() {
   const [terminalHeightByAgent, setTerminalHeightByAgent] = useState<
     Record<string, number>
   >({});
+  const [terminalDockMounted, setTerminalDockMounted] = useState(false);
+  const [terminalDockClosing, setTerminalDockClosing] = useState(false);
+  const [terminalDockAgentId, setTerminalDockAgentId] = useState<string>();
+  const terminalDockCloseTimerRef = useRef<number | null>(null);
   const [listCollapsed, setListCollapsed] = useState(false);
   const [listHoverRevealSuppressed, setListHoverRevealSuppressed] =
     useState(false);
@@ -1141,6 +1161,44 @@ export function App() {
   // 终端打开/折叠状态按 agent 隔离,避免切换项目/agent 后丢失当前终端 UI 状态。
   const terminalOpen = Boolean(terminalDockState?.open);
   const terminalCollapsed = Boolean(terminalDockState?.collapsed);
+  const terminalDockVisible =
+    terminalDockMounted && terminalDockAgentId === activeAgentId;
+
+  // 轨道尺寸只在开关时变更一次，终端本身用 transform 完成合成动画。
+  // 关闭时保留组件至动画结束，避免同步销毁 xterm 阻塞第一帧。
+  useEffect(() => {
+    if (terminalOpen && activeAgentId) {
+      if (terminalDockCloseTimerRef.current != null) {
+        window.clearTimeout(terminalDockCloseTimerRef.current);
+        terminalDockCloseTimerRef.current = null;
+      }
+      setTerminalDockAgentId(activeAgentId);
+      setTerminalDockClosing(false);
+      setTerminalDockMounted(true);
+      return;
+    }
+    if (!terminalDockMounted) return;
+    if (terminalDockAgentId !== activeAgentId) {
+      setTerminalDockMounted(false);
+      return;
+    }
+
+    setTerminalDockClosing(true);
+    terminalDockCloseTimerRef.current = window.setTimeout(
+      () => {
+        setTerminalDockMounted(false);
+        setTerminalDockClosing(false);
+      },
+      TERMINAL_DOCK_MOTION_MS,
+    );
+    return () => {
+      if (terminalDockCloseTimerRef.current != null) {
+        window.clearTimeout(terminalDockCloseTimerRef.current);
+        terminalDockCloseTimerRef.current = null;
+      }
+    };
+  }, [activeAgentId, terminalDockAgentId, terminalDockMounted, terminalOpen]);
+
   const drawerPinnedPanel = activeAgentId
     ? drawerPinnedByAgent[activeAgentId]
     : undefined;
@@ -1151,65 +1209,6 @@ export function App() {
   const activeRuntimeState = activeAgentId
     ? runtimeStateByAgent[activeAgentId]
     : undefined;
-
-  // 多选分享：弹框中选择消息后复制为文本/Markdown/图片
-  const handleMultiSelectCopy = useCallback(async (selectedIds: Set<string>, kind: "text" | "markdown" | "image") => {
-    // 图片模式：先截图再关弹框（避免 React re-render 导致 DOM 移位）
-    if (kind === "image") {
-      try {
-        const { toBlob: toBlobImg } = await import("html-to-image");
-        const el = document.querySelector(".message-list");
-        if (!el) return;
-        const blob = await toBlobImg(el as HTMLElement, {
-          pixelRatio: Math.min(2, window.devicePixelRatio || 1),
-          backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--color-bg-panel") || undefined,
-          // 截图时给消息列表添加内边距，避免文字贴边
-          style: { padding: "24px" },
-          filter: (node) =>
-            !(node instanceof HTMLElement) ||
-            (!node.classList.contains("turn-row-actions") &&
-              !node.classList.contains("user-turn-actions") &&
-              !node.classList.contains("copy-menu-popover")),
-        });
-        if (blob) {
-          await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-          showToast(t("copy.asImageCopied"));
-        }
-      } catch {
-        // 截图失败也给提示
-        showToast(t("copy.failed"));
-      }
-      setMultiSelectOpen(false);
-      return;
-    }
-
-    // 文本 / Markdown：关闭弹框后复制
-    async function doCopyText() {
-      const selected = activeMessages
-        .filter((m) => selectedIds.has(m.id))
-        .sort((a, b) => a.timestamp - b.timestamp);
-      if (selected.length === 0) return;
-
-      const separator = "\n\n---\n\n";
-      const content =
-        kind === "text"
-          ? selected.map((m) => {
-              let text = m.text;
-              text = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
-              text = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, "");
-              text = text.replace(/<skill\s+name="[^"]*"[^>]*>[\s\S]*?<\/skill>/gi, "");
-              return text.trim();
-            }).join(separator)
-          : selected.map((m) => m.text).join(separator);
-
-      await navigator.clipboard.writeText(content);
-      showToast(kind === "text" ? t("copy.asTextCopied") : t("copy.asMarkdownCopied"));
-    }
-
-    // 先执行复制再关弹框，确保 toast 在弹框消失后仍然弹出
-    await doCopyText();
-    setMultiSelectOpen(false);
-  }, [activeMessages]);
 
   // 消息分页:超过 100 条消息时启用,大幅减少输入卡顿
   // 首屏 100 条,每次加载 100 条,一页一页懒加载
@@ -1235,6 +1234,72 @@ export function App() {
     () => groupToolMessages(paginatedMessages),
     [paginatedMessages],
   );
+
+  // 多选分享：图片只克隆已勾选的可见消息，避免截到整屏会话或被滚动容器裁掉。
+  const handleMultiSelectCopy = useCallback(async (selectedIds: Set<string>, kind: "text" | "markdown" | "image") => {
+    if (kind === "image") {
+      try {
+        const { toBlob: toBlobImg } = await import("html-to-image");
+        const source = document.querySelector(".message-list") as HTMLElement | null;
+        if (!source) return;
+
+        const captureIds = getMultiSelectImageCaptureIds(renderedRuns, selectedIds);
+        const clone = source.cloneNode(true) as HTMLElement;
+        for (const item of Array.from(clone.children)) {
+          if (!(item instanceof HTMLElement)) continue;
+          const id = item.dataset.messageId;
+          if (!id || !captureIds.has(id)) item.remove();
+        }
+        clone.classList.add("multi-select-image-export");
+        clone.style.width = `${Math.max(source.clientWidth, source.scrollWidth)}px`;
+        clone.style.padding = "24px";
+        clone.style.background = getComputedStyle(document.documentElement).getPropertyValue("--color-bg-panel") || "#fff";
+        document.body.appendChild(clone);
+        let blob: Blob | null = null;
+        try {
+          blob = await toBlobImg(clone, {
+            pixelRatio: Math.min(2, window.devicePixelRatio || 1),
+            backgroundColor: getComputedStyle(document.documentElement).getPropertyValue("--color-bg-panel") || undefined,
+            filter: (node) =>
+              !(node instanceof HTMLElement) ||
+              (!node.classList.contains("turn-row-actions") &&
+                !node.classList.contains("user-turn-actions") &&
+                !node.classList.contains("copy-menu-popover")),
+          });
+        } finally {
+          clone.remove();
+        }
+        if (blob) {
+          await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+          showToast(t("copy.asImageCopied"));
+        }
+      } catch {
+        showToast(t("copy.failed"));
+      }
+      setMultiSelectOpen(false);
+      return;
+    }
+
+    const selected = activeMessages
+      .filter((m) => selectedIds.has(m.id))
+      .sort((a, b) => a.timestamp - b.timestamp);
+    if (selected.length === 0) return;
+
+    const separator = "\n\n---\n\n";
+    const content = kind === "text"
+      ? selected.map((m) => {
+          let text = m.text;
+          text = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          text = text.replace(/<thinking>[\s\S]*?<\/thinking>/g, "");
+          text = text.replace(/<skill\s+name="[^"]*"[^>]*>[\s\S]*?<\/skill>/gi, "");
+          return text.trim();
+        }).join(separator)
+      : selected.map((m) => m.text).join(separator);
+
+    await navigator.clipboard.writeText(content);
+    showToast(kind === "text" ? t("copy.asTextCopied") : t("copy.asMarkdownCopied"));
+    setMultiSelectOpen(false);
+  }, [activeMessages, renderedRuns]);
 
   const lastUserMessageId = useMemo(() => {
     for (let i = activeMessages.length - 1; i >= 0; i--) {
@@ -1287,10 +1352,13 @@ export function App() {
   const activeTerminalHeight = activeAgentId
     ? (terminalHeightByAgent[activeAgentId] ?? COMPOSER_DEFAULT_TERMINAL_HEIGHT)
     : COMPOSER_DEFAULT_TERMINAL_HEIGHT;
-  // 终端 grid 行高：关闭时 0，折叠时 34px，展开时 activeTerminalHeight。
-  // 由 App 层直接控制 --terminal-row-h，避免 TerminalDock 的 useLayoutEffect 在
-  // 滚动定位等操作导致父组件重渲染时引发 grid 布局抖动，把隐藏区域的终端拉到显示区域。
-  const terminalRowHeight = !terminalOpen ? 0 : terminalCollapsed ? 34 : activeTerminalHeight;
+  // 终端 Grid 只做 120ms 短过渡，面板表面仍由 transform 完成主要运动。
+  const terminalRowHeight =
+    !terminalDockVisible || terminalDockClosing
+      ? 0
+      : terminalCollapsed
+        ? 34
+        : activeTerminalHeight;
   const resolvedComposerHeight = Math.max(composerHeight, composerAutoHeight);
   const composerMode = prompt.startsWith("!!")
     ? "silent-shell"
@@ -1333,7 +1401,7 @@ export function App() {
     }
 
     if (!renderedDrawer) return;
-    // 抽屉收回时保留最后内容，等 grid 列宽动画结束后再卸载；否则文字会先消失，再空壳收回。
+    // 抽屉收回时保留最后内容，等 transform 动画结束后再卸载；否则文字会先消失，再空壳收回。
     drawerUnmountTimerRef.current = window.setTimeout(() => {
       setRenderedDrawer(null);
       drawerUnmountTimerRef.current = null;
@@ -4605,10 +4673,8 @@ ${goalTextRef.current}
           "--list-width": `${listCollapsed ? 0 : listWidth}px`,
           "--list-expanded-width": `${listWidth}px`,
           "--list-hover-width": `${Math.max(190, listWidth)}px`,
-          // 抽屉关闭/折叠时上限也必须归零，否则常驻第 5 列会留下右侧空白。
+          // 短布局过渡在面板滑动时同步收缩；内容仍由 renderedDrawer 保留到退出结束。
           "--drawer-width": `${drawer && !drawerCollapsed ? drawerWidth : 0}px`,
-          // 抽屉列下限：展开且未折叠时 260px，否则 0；实际列宽由 CSS max(下限, min(drawer-width, 38vw)) 计算。
-          // 驱动 5 列恒定 grid 平滑开合（与终端 --terminal-row-h 同理）。
           "--drawer-col-w": `${drawer && !drawerCollapsed ? 260 : 0}px`,
           "--drawer-splitter-w": `${drawer && !drawerCollapsed ? 6 : 0}px`,
         } as React.CSSProperties
@@ -4665,12 +4731,13 @@ ${goalTextRef.current}
         </div>
       )}
       <aside
-        className="chat-list-pane"
+        className="chat-list-pane v3-braun"
         onPointerLeave={() => {
           if (listHoverRevealSuppressed) setListHoverRevealSuppressed(false);
         }}
       >
-        <div className="list-toolbar">
+        <div className="sidebar-body">
+          <div className="list-toolbar">
           <div className="app-badge">
             <LogoMark />
             <span className="brand-wordmark" aria-label="PiDeck">
@@ -4937,7 +5004,11 @@ ${goalTextRef.current}
                   </div>
                 )}
                 {!isCollapsed &&
-                  projectDisplay.visibleChildren.map((child) => {
+                  (projectDisplay.visibleChildren.length > 0 ||
+                    projectSessionsLoading ||
+                    projectDisplay.hiddenChildCount > 0) && (
+                  <div className="session-card">
+                    {projectDisplay.visibleChildren.map((child) => {
                     const subagentGroupKey = `${project.id}:${child.key}`;
                     const subagentsExpanded = expandedCodexSubagentGroups.has(subagentGroupKey);
                     const renderCodexSubagents = (subagents: SessionSummary[]) => {
@@ -5028,10 +5099,6 @@ ${goalTextRef.current}
                             <div className="conversation-title">
                               {agent.status && (
                                 <span className={`agent-status-indicator status-${agent.status}`}>
-                                  {agent.status === 'running' && '●'}
-                                  {agent.status === 'idle' && '○'}
-                                  {agent.status === 'starting' && '◐'}
-                                  {' '}
                                   {t(`app.status${agent.status.charAt(0).toUpperCase() + agent.status.slice(1)}` as any) || agent.status}
                                 </span>
                               )}
@@ -5112,6 +5179,8 @@ ${goalTextRef.current}
                       })}
                     </span>
                   </button>
+                )}
+                  </div>
                 )}
                 {!isCollapsed && project.worktreeEnabled && (
                   <div className="worktree-children worktree-sandbox-list">
@@ -5246,10 +5315,6 @@ ${goalTextRef.current}
                                 <div className="conversation-title">
                                   {agent.status && (
                                     <span className={`agent-status-indicator status-${agent.status}`}>
-                                      {agent.status === 'running' && '●'}
-                                      {agent.status === 'idle' && '○'}
-                                      {agent.status === 'starting' && '◐'}
-                                      {' '}
                                       {t(`app.status${agent.status.charAt(0).toUpperCase() + agent.status.slice(1)}` as any) || agent.status}
                                     </span>
                                   )}
@@ -5341,6 +5406,7 @@ ${goalTextRef.current}
             </button>
           </div>
         )}
+        </div>
       </aside>
 
       <div
@@ -5370,14 +5436,17 @@ ${goalTextRef.current}
                     : activeProject?.name) ??
                   "PiDeck"}
               </strong>
+            </div>
+          </div>
+          <div
+            className={`chat-header-actions${activeAgent?.status === "starting" ? " loading" : ""}`}
+          >
+            <>
               {activeAgent && (
-                <span className="chat-path" title={`${activeProject?.path ?? activeAgent.cwd}  Agent ID: ${activeAgent.id}`}>
-                  {t("app.path")}: {displayPath(activeProject?.path ?? activeAgent.cwd)}
-                  <span className="chat-agent-id">AgentId: {activeAgent.id.slice(0, 8)}</span>
+                <span className="chat-agent-id" title={activeAgent.id}>
+                  AgentId: {activeAgent.id.slice(0, 8)}
                 </span>
               )}
-            </div>
-            <div className="chat-subtitle-row">
               <SessionStatus
                 state={activeRuntimeState}
                 duration={
@@ -5386,43 +5455,39 @@ ${goalTextRef.current}
                     : undefined
                 }
               />
-          </div>
-          </div>
-          <div
-            className={`chat-header-actions${activeAgent?.status === "starting" ? " loading" : ""}`}
-          >
-            <>
-              <div className="header-action-group branch-group">
-                {!isLanWeb && (
-                  <BranchSelector
-                    gitInfo={gitInfo}
-                    switchingBranch={switchingBranch}
-                    onSwitch={switchBranch}
-                    onCreateBranch={createBranch}
-                  />
-                )}
-              </div>
-              <div className="header-action-group session-group">
-                <div className="session-combo" ref={sessionComboRef}>
-                  <button
-                    className="session-combo-trigger"
-                    disabled={!activeProjectId || isAgentStarting}
-                    title={t("app.newSession")}
-                    onClick={() => {
-                      if (activeAgentId) {
-                        setSessionActionsOpen((open) => !open);
-                      } else {
-                        createAgent();
-                      }
-                    }}
-                  >
-                    <span className="session-combo-label">{t("app.new")}</span>
-                    {activeAgentId && (
-                      <span className={`session-combo-chevron${sessionActionsOpen ? " open" : ""}`}>
-                        <ChevronDown size={12} />
-                      </span>
-                    )}
-                  </button>
+              <div className="header-actions-right">
+                <div className="header-action-group branch-group">
+                  {!isLanWeb && (
+                    <BranchSelector
+                      gitInfo={gitInfo}
+                      switchingBranch={switchingBranch}
+                      onSwitch={switchBranch}
+                      onCreateBranch={createBranch}
+                    />
+                  )}
+                </div>
+                <div className="header-action-group session-group">
+                  <div className="session-combo" ref={sessionComboRef}>
+                    <button
+                      className="session-combo-trigger"
+                      disabled={!activeProjectId || isAgentStarting}
+                      title={t("app.newSession")}
+                      onClick={() => {
+                        if (activeAgentId) {
+                          setSessionActionsOpen((open) => !open);
+                        } else {
+                          createAgent();
+                        }
+                      }}
+                    >
+                      <Plus size={14} strokeWidth={2} aria-hidden="true" />
+                      <span className="session-combo-label">{t("app.new")}</span>
+                      {activeAgentId && (
+                        <span className={`session-combo-chevron${sessionActionsOpen ? " open" : ""}`}>
+                          <ChevronDown size={12} />
+                        </span>
+                      )}
+                    </button>
                   {sessionActionsOpen && activeAgentId && (
                     <div className="session-combo-menu">
                       <button
@@ -5509,6 +5574,7 @@ ${goalTextRef.current}
                   )}
                 </div>
               </div>
+              </div>
             </>
           </div>
         </header>
@@ -5575,7 +5641,7 @@ ${goalTextRef.current}
             <div className="message-list">
               {/* 使用 groupToolMessages 渲染：user/error/system 独立条目，
                   assistant + tool 聚合为 agnet-run（TurnRow 自带操作栏） */}
-              {renderedRuns.map((item) => {
+              {renderedRuns.map((item, index) => {
                 if (item.kind === "agent-run") {
                   // 判断该 run 是否包含正在流式的消息
                   const isRunStreaming = Boolean(
@@ -5591,7 +5657,7 @@ ${goalTextRef.current}
                       onPreviewImage={setPreviewImage}
                       showThinking={settings.showThinking}
                       isStreaming={isRunStreaming}
-                      agentRunning={isAgentBusy}
+                      agentRunning={isAgentBusy && index === renderedRuns.length - 1}
                       onOpenExternal={(url) => api.app.openExternal(url)}
                       onOpenFile={openFilePath}
                       onDiffFile={diffFilePath}
@@ -5713,8 +5779,8 @@ ${goalTextRef.current}
           {showScrollToBottom && (
             <button
               className="scroll-to-bottom-btn"
-              // 按钮脱离滚动容器后，由 composer 实际高度决定 bottom，避免输入框增高或图片预览时遮挡。
-              style={{ bottom: Math.max(24, composerOffsetHeight + 18) }}
+              // 按钮脱离滚动容器后，由 composer 实际高度 + 终端高度决定 bottom，避免输入框增高或终端打开时遮挡。
+              style={{ bottom: Math.max(24, terminalRowHeight + composerOffsetHeight + 18) }}
               onClick={scrollToBottom}
               title={t("app.scrollToBottom")}
             >
@@ -5829,6 +5895,18 @@ ${goalTextRef.current}
                   />
                 ) : undefined
               }
+              pathIndicator={
+                !composerMode && !drawer && activeAgent?.sessionPath ? (
+                  <button
+                    className="composer-path-chip"
+                    onClick={() => api.files.open(activeAgent.sessionPath!)}
+                    title={t("app.openSessionFile")}
+                  >
+                    <FolderOpen size={12} />
+                    <span>{activeAgent.sessionPath}</span>
+                  </button>
+                ) : undefined
+              }
             />
             <RichInput
               ref={composerTextareaRef}
@@ -5930,49 +6008,31 @@ ${goalTextRef.current}
               />
             )}
             <div className="composer-footer">
-              <span
-                className={composerMode ? "composer-mode-status" : ""}
-                onClick={
-                  !composerMode && !drawer && activeAgent?.sessionPath
-                    ? () => api.files.open(activeAgent.sessionPath!)
-                    : undefined
-                }
-                role={!composerMode && !drawer && activeAgent?.sessionPath ? "button" : undefined}
-                tabIndex={!composerMode && !drawer && activeAgent?.sessionPath ? 0 : undefined}
-                title={
-                  !composerMode && !drawer && activeAgent?.sessionPath
-                    ? t("app.openSessionFile")
-                    : undefined
-                }
-              >
-                {composerStatusText}
-              </span>
-              {activeAgent?.status === "running" && (
-                <button className="stop-send" onClick={() => abortAgent()}>
-                  {t("app.stop")}
-                </button>
+              {composerMode && (
+                <span className="composer-mode-status">{composerStatusText}</span>
               )}
-              <div className="send-button-group">
-                <button
-                  disabled={
-                    isAgentStarting ||
-                    !activeAgentId ||
-                    (!prompt.trim() && attachedImages.length === 0)
-                  }
-                  className={
-                    isAgentBusy && (prompt.trim() || attachedImages.length > 0)
-                      ? "queue-send"
-                      : ""
-                  }
-                  onClick={sendPrompt}
-                >
-                  {isAgentBusy && (prompt.trim() || attachedImages.length > 0)
-                    ? t("app.composerAttach")
-                    : t("app.send")}
-                </button>
-                {isAgentBusy &&
-                  (prompt.trim() || attachedImages.length > 0) && (
-                    <div className="send-behavior-menu-wrap">
+              <div className="footer-actions">
+                <div className="send-behavior-menu-wrap">
+                  {isAgentBusy ? (
+                    <button className="btn-circle stop" onClick={() => abortAgent()} title={t("app.stop")}>
+                      <Square size={18} strokeWidth={0} fill="currentColor" />
+                    </button>
+                  ) : (
+                    <button
+                      disabled={
+                        isAgentStarting ||
+                        !activeAgentId ||
+                        (!prompt.trim() && attachedImages.length === 0)
+                      }
+                      className="btn-circle send"
+                      onClick={sendPrompt}
+                      title={t("app.send")}
+                    >
+                      <ArrowUp size={18} strokeWidth={2.5} />
+                    </button>
+                  )}
+                  {isAgentBusy &&
+                    (prompt.trim() || attachedImages.length > 0) && (
                       <button
                         className="send-behavior-toggle"
                         title={t("app.sendBehaviorTitle")}
@@ -5980,30 +6040,32 @@ ${goalTextRef.current}
                       >
                         <ChevronDown size={14} />
                       </button>
-                      {sendBehaviorMenuOpen && (
-                        <div className="send-behavior-menu">
-                          <button onClick={sendPrompt}>
-                            <strong>{t("app.sendSteerTitle")}</strong>
-                            <span>{t("app.sendSteerDesc")}</span>
-                          </button>
-                          <button onClick={sendPromptAsFollowUp}>
-                            <strong>{t("app.sendFollowUpTitle")}</strong>
-                            <span>{t("app.sendFollowUpDesc")}</span>
-                          </button>
-                        </div>
-                      )}
+                    )}
+                  {sendBehaviorMenuOpen && (
+                    <div className="send-behavior-menu">
+                      <button onClick={sendPrompt}>
+                        <strong>{t("app.sendSteerTitle")}</strong>
+                        <span>{t("app.sendSteerDesc")}</span>
+                      </button>
+                      <button onClick={sendPromptAsFollowUp}>
+                        <strong>{t("app.sendFollowUpTitle")}</strong>
+                        <span>{t("app.sendFollowUpDesc")}</span>
+                      </button>
                     </div>
                   )}
+                </div>
               </div>
             </div>
           </div>
         </footer>
         )}
 
-        {!isLanWeb && activeAgentId && !isPendingAgentId(activeAgentId) && !settingsOpen && !configOpen && !environmentDialog && terminalOpen && (
+        {!isLanWeb && activeAgentId && !isPendingAgentId(activeAgentId) && !settingsOpen && !configOpen && !environmentDialog && terminalDockVisible && (
           <TerminalDock
+            key={terminalDockAgentId}
             agentId={activeAgentId}
-            open={terminalOpen}
+            open={terminalDockVisible}
+            closing={terminalDockClosing}
             collapsed={terminalCollapsed}
             height={terminalHeightByAgent[activeAgentId] ?? 220}
             terminal={api.terminal}
@@ -6118,9 +6180,9 @@ ${goalTextRef.current}
               onSelectTab={selectEditorTab}
               onCloseTab={closeEditorTab}
               onClose={() => { setActiveTabId(null); setEditorTabs([]); setDrawer(null); }}
-              readContent={handleReadContent}
-              readOriginalContent={handleReadOriginalContent}
-              saveContent={handleSaveContent}
+              readContent={readEditorFileContent}
+              readOriginalContent={readEditorOriginalContent}
+              saveContent={saveEditorFileContent}
               theme={document.documentElement.dataset.theme === "dark" ? "dark" : "light"}
               maxFileSizeMB={settings.maxEditorFileSizeMB}
             />
@@ -6170,6 +6232,10 @@ ${goalTextRef.current}
               onRefreshFiles={() => {
                 refreshFiles(activeProjectId);
                 refreshGitChangedFiles(activeProjectId);
+              }}
+              onOpenFolder={() => {
+                const p = projects.find((p) => p.id === activeProjectId);
+                if (p) void api.files.open(p.path);
               }}
               onRefreshSessions={() =>
                 refreshSessions(sessionsProjectId ?? activeProjectId)
@@ -6804,9 +6870,9 @@ ${goalTextRef.current}
           onSelectTab={selectEditorTab}
           onCloseTab={closeEditorTab}
           onClose={() => { setActiveTabId(null); setEditorTabs([]); }}
-          readContent={handleReadContent}
-          readOriginalContent={handleReadOriginalContent}
-          saveContent={handleSaveContent}
+          readContent={readEditorFileContent}
+          readOriginalContent={readEditorOriginalContent}
+          saveContent={saveEditorFileContent}
           theme={document.documentElement.dataset.theme === "dark" ? "dark" : "light"}
           maxFileSizeMB={settings.maxEditorFileSizeMB}
         />

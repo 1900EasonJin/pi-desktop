@@ -5,6 +5,7 @@ import {
 	ipcMain,
 	Menu,
 	nativeImage,
+	nativeTheme,
 	net,
 	shell,
 	Tray,
@@ -153,6 +154,11 @@ let petSystem: PetSystem | null = null;
 let appLogger: AppLogger;
 let rpcLogger: RpcLogger;
 let feishuBridge: FeishuBridge | null = null;
+
+function applyNativeThemeSource(settings: AppSettings) {
+	// 原生标题栏不受 renderer CSS 影响；跟随应用主题，避免暗色界面顶部仍是系统浅色栏。
+	nativeTheme.themeSource = settings.theme === "system" ? "system" : settings.theme;
+}
 
 const RELEASES_URL = "https://github.com/ayuayue/pi-desktop/releases";
 const LATEST_RELEASE_API =
@@ -588,6 +594,7 @@ async function prepareMainPreloadPath() {
 }
 
 async function createWindow() {
+	applyNativeThemeSource(settingsStore.get());
 	const windowOptions = settingsStore.createWindowOptions();
 	const showMainWindowImmediately = shouldShowMainWindowImmediately();
 	const sourcePreloadPath = join(__dirname, "../preload/index.js");
@@ -604,9 +611,26 @@ async function createWindow() {
 		electronRendererUrl: process.env.ELECTRON_RENDERER_URL ? "set" : "unset",
 	});
 
+	// 根据用户的主题设置选择窗口背景色，避免系统标题栏与暗色主题间出现浅色条带。
+	const theme = settingsStore.get().theme;
+	const lightBg = settingsStore.get().lightBackground;
+	const isDark =
+		theme === "dark" ||
+		(theme === "system" && nativeTheme.shouldUseDarkColors);
+	const lightBgColors: Record<string, string> = {
+		white: "#ffffff",
+		warm: "#f3f4f1",
+		paper: "#f7f6f1",
+		blue: "#f4f8ff",
+		green: "#f4fbf6",
+	};
+	const backgroundColor = isDark
+		? "#111315"
+		: (lightBgColors[lightBg] ?? "#f3f4f1");
+
 	mainWindow = new BrowserWindow({
 		show: showMainWindowImmediately,
-		backgroundColor: "#eef0f3",
+		backgroundColor,
 		width: 1480,
 		height: 960,
 		minWidth: 880,
@@ -615,7 +639,7 @@ async function createWindow() {
 		icon: iconPath,
 		frame: windowOptions.frame,
 		titleBarStyle: windowOptions.titleBarStyle,
-		trafficLightPosition: windowOptions.trafficLightPosition,
+		...(windowOptions.trafficLightPosition ? { trafficLightPosition: windowOptions.trafficLightPosition } : {}),
 		webPreferences: {
 			preload: mainPreloadPath,
 			sandbox: false,
@@ -1865,6 +1889,9 @@ function registerIpc() {
 				"desktopProxyBypass" in patch
 			) {
 				await applyDesktopProxy(settings);
+			}
+			if ("theme" in patch) {
+				applyNativeThemeSource(settings);
 			}
 			if ("useNativeTitleBar" in patch) {
 				settingsStore.notifyTitleBarChange(mainWindow);

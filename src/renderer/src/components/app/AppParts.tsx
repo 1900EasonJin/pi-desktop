@@ -485,46 +485,31 @@ export function SessionStatus(props: {
 }) {
 	const state = props.state;
 	if (!state) return null;
-	const thinkingLevelLabel = THINKING_LEVELS.find(
-		(level) => level.value === state.thinkingLevel,
-	)?.labelKey;
 	return (
 		<div className="session-status">
-			<span className="model-chip">
-				{state.provider ? `${state.provider}/` : ""}{state.modelName ?? state.modelId ?? "model"}
-			</span>
-			<span className="think-chip">
-				{t("app.think")}: {thinkingLevelLabel ? t(thinkingLevelLabel) : state.thinkingLevel ?? "-"}
-			</span>
 			{state.contextPercent != null && (
 				<span className="ctx-chip">
 					{t("app.ctx")}:{" "}
 					{state.contextPercent?.toFixed?.(1) ??
 						state.contextPercent}
 					% / {formatCompact(state.contextWindow)}
+					{state.inputTokens != null && (
+						<>{" "}↑ {formatCompact(state.inputTokens)}</>
+					)}
+					{state.outputTokens != null && (
+						<>{" "}↓ {formatCompact(state.outputTokens)}</>
+					)}
 				</span>
 			)}
-			{state.inputTokens != null && (
-				<span className="token-chip token-input">
-					↑ {formatCompact(state.inputTokens)}
-				</span>
-			)}
-			{state.outputTokens != null && (
-				<span className="token-chip token-output">
-					↓ {formatCompact(state.outputTokens)}
-				</span>
-			)}
-			{state.cacheHitPercent != null && (
+			{(state.cacheHitPercent != null || state.cacheTotal != null) && (
 				<span className="cache-chip">
-					{t("app.cacheHit")}: {state.cacheHitPercent?.toFixed?.(0) ?? state.cacheHitPercent}%
-				</span>
-			)}
-			{state.cacheTotal != null && (
-				<span className="cache-chip cache-total">{t("app.cache")}: {formatCompact(state.cacheTotal)}</span>
-			)}
-			{state.cost != null && (
-				<span className="cost-chip" title={t("app.totalCost")}>
-					${state.cost.toFixed(3)}
+					{state.cacheHitPercent != null && (
+						<>{t("app.cacheHit")}: {state.cacheHitPercent?.toFixed?.(0) ?? state.cacheHitPercent}%</>
+					)}
+					{state.cacheHitPercent != null && state.cacheTotal != null && " "}
+					{state.cacheTotal != null && (
+						<>{t("app.cache")}: {formatCompact(state.cacheTotal)}</>
+					)}
 				</span>
 			)}
 		</div>
@@ -535,6 +520,21 @@ export function SessionStatus(props: {
 // widgetKey 由扩展定义且跨重启稳定,可按 widgetKey 持久化折叠状态。
 const EXTENSION_WIDGET_COLLAPSED_KEY_PREFIX =
 	"pid:extension-widget-collapsed:";
+
+/** 渲染 widget 单行内容，将 ✓ 标记高亮为绿色，让 todo 等扩展的完成态更醒目。 */
+function renderWidgetLine(line: string): ReactNode {
+	const parts = line.split(/(✓)/g);
+	if (parts.length <= 1) return line;
+	return parts.map((part, i) =>
+		part === "✓" ? (
+			<span key={i} className="widget-check-done">
+				✓
+			</span>
+		) : (
+			part
+		),
+	);
+}
 
 export function ExtensionWidgetCard(props: {
 	widgetKey: string;
@@ -599,7 +599,7 @@ export function ExtensionWidgetCard(props: {
 				<div className="extension-widget-card-content">
 					{props.lines.map((line, index) => (
 						<div key={index} className="extension-widget-card-line">
-							{line}
+							{renderWidgetLine(line)}
 						</div>
 					))}
 				</div>
@@ -623,6 +623,8 @@ export function ComposerToolbar(props: {
 	onCancelPlan?: () => void;
 	/** 在思考按钮后插入的额外指示器（如飞书链接状态） */
 	feishuIndicator?: ReactNode;
+	/** 会话文件路径卡片,渲染在思考按钮之后、feishuIndicator 之后 */
+	pathIndicator?: ReactNode;
 
 }) {
 	const ctxPercent = props.state?.contextPercent;
@@ -675,6 +677,7 @@ export function ComposerToolbar(props: {
 				{t("app.think")}: {thinkingDisplay}
 			</button>
 			{props.feishuIndicator}
+			{props.pathIndicator}
 
 			{showCompact && (
 				<button
@@ -1235,9 +1238,6 @@ export function BranchSelector(props: {
 	const current = props.gitInfo.current ?? "";
 	const branches = props.gitInfo.branches;
 
-	// 无分支信息时不渲染
-	if (!current && branches.length === 0) return null;
-
 	const handleCreateBranch = () => {
 		const trimmed = newBranchName.trim();
 		if (!trimmed) return;
@@ -1262,9 +1262,11 @@ export function BranchSelector(props: {
 					<GitBranch size={14} />
 				</span>
 				<span className="branch-label" title={current}>
-					{current || "detached"}
+					{current || t("app.branchNone")}
 				</span>
-				<span className="branch-badge">{branches.length}</span>
+				{branches.length > 0 && (
+					<span className="branch-badge">{branches.length}</span>
+				)}
 				<span className={`branch-chevron${open ? " open" : ""}`}>
 					<ChevronDown size={12} />
 				</span>
@@ -1389,8 +1391,8 @@ export function EmptyState(props: { hasProject: boolean; onCreate: () => void })
 			<div className="empty-logo">
 				<svg
 					viewBox="140 140 520 520"
-					width="40"
-					height="40"
+					width="66"
+					height="66"
 					aria-hidden="true"
 				>
 					<path
@@ -1401,8 +1403,13 @@ export function EmptyState(props: { hasProject: boolean; onCreate: () => void })
 					<path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
 				</svg>
 			</div>
-			<h2>{t("app.startAgent")}</h2>
-			<p>{t("app.emptyGuide")}</p>
+			<div className="empty-tagline" aria-label={`${t("app.emptyTaglineLine1")} ${t("app.emptyTaglineLine2Prefix")}${t("app.emptyTaglineYours")}`}>
+				<span>{t("app.emptyTaglineLine1")}</span>
+				<span>
+					{t("app.emptyTaglineLine2Prefix")}
+					<em className="empty-tagline-yours">{t("app.emptyTaglineYours")}</em>
+				</span>
+			</div>
 			{props.hasProject ? (
 				<button onClick={props.onCreate}>{t("app.createAgent")}</button>
 			) : (
@@ -1786,7 +1793,7 @@ const statusLabel =
 			data-tool-kind={isSkillRead ? "skill" : getToolKind(toolName)}
 			data-message-id={props.message.id}
 		>
-			<div className="tool-card-header">
+			<div className={`tool-card-header${diffTarget ? " has-diff" : ""}`}>
 				<button
 					className="tool-card-trigger"
 					onClick={() => setExpanded((v) => !v)}
@@ -2100,6 +2107,7 @@ export const AskQuestionCard = memo(function AskQuestionCard(props: {
 							className="ask-question-card-submit"
 							onClick={handleInputSubmit}
 							disabled={!inputValue.trim() || cancelling}
+							title={t("ask.submit")}
 						>
 							<Check size={14} />
 						</button>
@@ -2107,8 +2115,10 @@ export const AskQuestionCard = memo(function AskQuestionCard(props: {
 							className="ask-question-card-cancel"
 							onClick={handleCancel}
 							disabled={cancelling}
+							title={t("common.cancel")}
+							aria-label={t("common.cancel")}
 						>
-							{cancelling ? cancellingLabel : t("common.cancel")}
+							<X size={14} />
 						</button>
 					</div>
 				)}
@@ -2134,8 +2144,10 @@ export const AskQuestionCard = memo(function AskQuestionCard(props: {
 								className="ask-question-card-cancel"
 								onClick={handleCancel}
 								disabled={cancelling}
+								title={t("common.cancel")}
+								aria-label={t("common.cancel")}
 							>
-								{cancelling ? cancellingLabel : t("common.cancel")}
+								<X size={14} />
 							</button>
 						</div>
 					</div>
@@ -2320,6 +2332,15 @@ function PetChooserPreview(props: {
 
 /** 助手正文：扁平 markdown 渲染，无气泡包裹，全宽排版，支持内嵌图片。
  *  路径链接化用 remark 插件在 mdast 层处理（见底部 remarkLinkifyPaths），不再前置改写原始字符串。 */
+/** 表格容器：与 code-block-wrap 保持相同的宽度与圆角，内部 <table> 仍负责横向滚动。 */
+function TableWrapper(props: React.ComponentProps<"table">) {
+	return (
+		<div className="table-wrap">
+			<table {...props} />
+		</div>
+	);
+}
+
 /** 流式输出期间的轻量代码块：不加载 mermaid、不跑数学/语法高亮，只展示原始文本，
  *  避免未闭合的 ```mermaid 围栏触发 mermaid.initialize/render 挤占主线程。 */
 function StreamingCodeBlock(props: React.HTMLAttributes<HTMLPreElement>) {
@@ -2378,6 +2399,7 @@ export const AssistantText = memo(
 					urlTransform={markdownUrlTransform}
 					components={{
 						pre: streaming ? StreamingCodeBlock : CodeBlock,
+						table: TableWrapper,
 						span: MathSpan,
 						a: (linkProps) => (
 							<MarkdownLink
@@ -2605,7 +2627,7 @@ export const TurnRow = memo(function TurnRow(props: {
 						<span className="turn-row-duration">{formatDuration(duration)}</span>
 					)}
 				</div>
-				{/* 执行过程概要（含工具/思考/中间回答），默认折叠 */}
+				{/* 执行过程概要（含工具/思考/中间回答），置于最终回答之前以保持调用顺序。 */}
 				{hasFoldableContent && summaryText && (
 					<div className="execution-summary">
 						<button
@@ -3937,6 +3959,7 @@ export function DrawerContent(props: {
 	onClose: () => void;
 	onFileContextMenu: (node: FileTreeNode, x: number, y: number) => void;
 	onRefreshFiles: () => void;
+	onOpenFolder?: () => void;
 	onRefreshSessions: () => void;
 	onOpenSession: (session: SessionSummary) => void;
 	onRenameSession: (filePath: string, newName: string) => void;
@@ -3968,14 +3991,6 @@ export function DrawerContent(props: {
 					</button>
 					<button
 						disabled={props.pinned}
-						title={props.pinned ? t("drawer.pinnedCannotCollapse") : t("drawer.collapsePanel")}
-						aria-label={t("drawer.collapsePanel")}
-						onClick={props.onCollapse}
-					>
-						<ChevronRight size={16} />
-					</button>
-					<button
-						disabled={props.pinned}
 						title={props.pinned ? t("drawer.pinnedCannotClose") : t("drawer.closePanel")}
 						aria-label={t("drawer.closePanel")}
 						onClick={props.onClose}
@@ -3997,6 +4012,7 @@ export function DrawerContent(props: {
 					onToggleDirectory={props.onToggleDirectory}
 					onFileContextMenu={props.onFileContextMenu}
 					onRefreshFiles={props.onRefreshFiles}
+					onOpenFolder={props.onOpenFolder}
 					onDiffFile={props.onDiffFile}
 					onOpenFile={props.onOpenFile}
 					onViewFile={props.onViewFile}
@@ -4028,6 +4044,7 @@ function FilesPanel(props: {
 	onToggleDirectory: (path: string) => void;
 	onFileContextMenu: (node: FileTreeNode, x: number, y: number) => void;
 	onRefreshFiles: () => void;
+	onOpenFolder?: () => void;
 	onDiffFile?: DiffFileHandler;
 	onOpenFile?: (path: string) => void;
 	onViewFile?: (path: string) => void;
@@ -4057,7 +4074,15 @@ function FilesPanel(props: {
 		<div className="files-panel">
 			<div className="panel-action-row">
 				<span>{t("drawer.fileItems", { count: props.files.length })}</span>
-				<button onClick={props.onRefreshFiles}>{t("common.refresh")}</button>
+				<div className="panel-action-buttons">
+					{props.onOpenFolder && (
+						<button onClick={props.onOpenFolder} title={t("drawer.openFolder")}>
+							<Folder size={14} />
+							{t("drawer.openFolder")}
+						</button>
+					)}
+					<button onClick={props.onRefreshFiles}>{t("common.refresh")}</button>
+				</div>
 			</div>
 			{props.modifiedFiles.length > 0 && (
 				<div className="modified-files-section">
